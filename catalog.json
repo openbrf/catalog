@@ -1,19 +1,4 @@
 {
   "version": 1,
-  "entries": [
-    {
-      "type": "theme",
-      "id": "example-theme",
-      "version": "1.0.0",
-      "name": { "sv": "Exempeltema", "en": "Example theme" },
-      "description": { "sv": "Demonstration", "en": "Demonstration" },
-      "contract": "^1.0.0",
-      "extends": "porttavlan",
-      "artifact": {
-        "url": "https://github.com/openbrf/example-theme/releases/download/v1.0.0/example-theme-1.0.0.tgz",
-        "sha512": "sha512-z4PhNX7vuL3xVChQ1m2AB9Yg5AULVxXcg/SpIdNs6c5H0NE8XYXysP+DGNKHfuwvY7kxvUOBeSv6GqaPRbJ2Pw==",
-        "bytes": 1
-      }
-    }
-  ]
+  "entries": []
 }
