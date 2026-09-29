@@ -1,0 +1,67 @@
+name: Check
+
+# Every instance reads catalog.json from main and offers what it lists, so
+# every change to it passes the listing checks before it merges. The nightly
+# run catches a listing that stopped passing after it merged: a release taken
+# down, an artifact that no longer matches.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Reading only: the repository, and the attestations of the listed artifacts.
+permissions:
+  contents: read
+  attestations: read
+
+env:
+  # The openbrf/openbrf commit whose index schema and package checks the
+  # listings are held to. Moved on purpose, in a reviewed change, when the
+  # contract changes.
+  CORE_REF: 808311eef7ca1c8ed55af6f4102274a8ccff6c31
+
+jobs:
+  listings:
+    name: Listing checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the core
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openbrf/openbrf
+          ref: ${{ env.CORE_REF }}
+          path: .core
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .core/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .core/.nvmrc
+
+      - name: Build the plugin SDK and theme tools
+        working-directory: .core
+        run: |
+          pnpm install --frozen-lockfile --filter "@openbrf/plugin-sdk..." --filter "@openbrf/theme-tools..."
+          pnpm --filter "@openbrf/plugin-sdk..." --filter "@openbrf/theme-tools..." build
+
+      - name: Test the checks
+        run: node --test check/
+
+      - name: Check catalog.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node check/cli.mjs catalog.json

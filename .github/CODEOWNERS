@@ -1,0 +1,4 @@
+# Whatever merges to main is offered to every instance, and the check that
+# gates it lives in this repository too. Every file needs a maintainer's
+# review (GOVERNANCE.md in openbrf/openbrf names the maintainers).
+* @neeo
