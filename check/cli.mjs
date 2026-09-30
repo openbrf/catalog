@@ -39,6 +39,7 @@ async function releaseOf(owner, repo, tag) {
         "x-github-api-version": "2022-11-28",
         ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
       },
+      signal: AbortSignal.timeout(30_000),
     },
   );
   if (response.status === 404) {
@@ -61,9 +62,15 @@ async function releaseOf(owner, repo, tag) {
   };
 }
 
-/** Downloads at most `maxBytes`, whatever the server says the length is. */
+/**
+ * Downloads at most `maxBytes`, whatever the server says the length is. The
+ * deadline covers reading the body as well as the headers.
+ */
 async function fetchArtifact(url, maxBytes) {
-  const response = await fetch(url, { redirect: "follow" });
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(120_000),
+  });
   if (!response.ok || response.body === null) {
     throw new Error(`${url} answered ${String(response.status)}.`);
   }
