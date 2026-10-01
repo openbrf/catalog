@@ -6,16 +6,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
-import { pathToFileURL } from "node:url";
 
+import { sdk, themeTools } from "./core.mjs";
 import { catalogProblems, releaseLocation } from "./listing.mjs";
-
-const core = resolve(process.env.OPENBRF_CORE ?? ".core");
-const load = (path) => import(pathToFileURL(join(core, path)).href);
-const sdk = await load("packages/plugin-sdk/dist/index.js");
-const themeTools = await load("packages/theme-tools/dist/index.js");
 
 const encode = (value) =>
   new TextEncoder().encode(
@@ -227,6 +221,18 @@ describe("a listing", () => {
     assert.match(problems[1], /the artifact is sha512-/);
   });
 
+  it("fails when the release lists another size than the entry and the download", async () => {
+    const file = pluginEntry(plugin).artifact.url.split("/").at(-1);
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      published([pluginFile], {
+        release: { assets: [{ name: file, size: plugin.byteLength + 1 }] },
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /states \d+ bytes, the release asset is \d+/);
+  });
+
   it("fails when it states no size", async () => {
     const entry = pluginEntry(plugin);
     delete entry.artifact.bytes;
@@ -277,6 +283,50 @@ describe("a listing", () => {
     );
     assert.equal(problems.length, 1);
     assert.match(problems[0], /there is no release example\/openbrf-occupancy v1\.0\.0/);
+  });
+
+  it("reports a release it cannot read on that entry and checks the others", async () => {
+    const deps = published([pluginFile, themeFile]);
+    const releaseOf = deps.releaseOf;
+    deps.releaseOf = async (owner, repo, tag) => {
+      if (repo === "openbrf-occupancy") {
+        throw new Error("GitHub answered 503.");
+      }
+      return releaseOf(owner, repo, tag);
+    };
+    const wrongSize = themeEntry(theme);
+    wrongSize.artifact.bytes = theme.byteLength + 1;
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin), wrongSize] },
+      deps,
+    );
+    assert.equal(problems.length, 2);
+    assert.match(
+      problems[0],
+      /^plugin occupancy 1\.0\.0: the release could not be read: GitHub answered 503\.$/,
+    );
+    assert.match(problems[1], /^theme example-theme 1\.0\.0: .*bytes/);
+  });
+
+  it("holds the attestation to the release's repository and tag", async () => {
+    const deps = published([pluginFile]);
+    const calls = [];
+    deps.verifyAttestation = async (_bytes, fileName, repository, tag) => {
+      calls.push({ fileName, repository, tag });
+      return null;
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      deps,
+    );
+    assert.deepEqual(problems, []);
+    assert.deepEqual(calls, [
+      {
+        fileName: "occupancy-1.0.0.tgz",
+        repository: "example/openbrf-occupancy",
+        tag: "v1.0.0",
+      },
+    ]);
   });
 
   it("fails when the attestation does not verify", async () => {
@@ -338,6 +388,76 @@ describe("a listing", () => {
       published([{ url: entry.artifact.url, bytes: child }]),
     );
     assert.ok(problems.some((problem) => /absent-theme, which is neither/.test(problem)));
+  });
+
+  describe("a theme extending another in the index", () => {
+    const child = themeArchive({
+      ...THEME_MANIFEST,
+      name: "child-theme",
+      displayName: "Child",
+      extends: "example-theme",
+    });
+    const childEntry = (overrides = {}) =>
+      themeEntry(child, {
+        id: "child-theme",
+        extends: "example-theme",
+        artifact: {
+          url: releaseUrl("child-theme", "1.0.0", "child-theme-1.0.0.tgz"),
+          sha512: sri(child),
+          bytes: child.byteLength,
+        },
+        ...overrides,
+      });
+    const childFile = () => ({ url: childEntry().artifact.url, bytes: child });
+
+    it("passes when both pass", async () => {
+      const problems = await catalogProblems(
+        { version: 1, entries: [themeEntry(theme), childEntry()] },
+        published([themeFile, childFile()]),
+      );
+      assert.deepEqual(problems, []);
+    });
+
+    it("is not blamed when its parent fails its checks", async () => {
+      const parent = themeEntry(theme);
+      parent.artifact.bytes = theme.byteLength + 1;
+      const problems = await catalogProblems(
+        { version: 1, entries: [parent, childEntry()] },
+        published([themeFile, childFile()]),
+      );
+      const own = problems.filter((problem) => problem.startsWith("theme child-theme"));
+      assert.deepEqual(own, [
+        "theme child-theme 1.0.0: its parent example-theme failed its checks, so it is not linted until the parent passes.",
+      ]);
+      assert.ok(problems.some((problem) => problem.startsWith("theme example-theme")));
+    });
+
+    it("fails when the parent is deprecated and it is not", async () => {
+      const problems = await catalogProblems(
+        {
+          version: 1,
+          entries: [themeEntry(theme, { deprecated: true }), childEntry()],
+        },
+        published([themeFile, childFile()]),
+      );
+      assert.deepEqual(problems, [
+        "theme child-theme 1.0.0: extends example-theme, which is deprecated in this index, so a new install cannot install its parent.",
+      ]);
+    });
+
+    it("passes when both are deprecated", async () => {
+      const problems = await catalogProblems(
+        {
+          version: 1,
+          entries: [
+            themeEntry(theme, { deprecated: true }),
+            childEntry({ deprecated: true }),
+          ],
+        },
+        published([themeFile, childFile()]),
+      );
+      assert.deepEqual(problems, []);
+    });
   });
 
   it("fails when the theme fails the install lint", async () => {

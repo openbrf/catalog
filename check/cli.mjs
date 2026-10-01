@@ -14,20 +14,15 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { sdk, themeTools } from "./core.mjs";
 import { catalogProblems } from "./listing.mjs";
 
 const run = promisify(execFile);
 
 const catalogPath = resolve(process.argv[2] ?? "catalog.json");
-const core = resolve(process.env.OPENBRF_CORE ?? ".core");
 const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
-
-const load = (path) => import(pathToFileURL(join(core, path)).href);
-const sdk = await load("packages/plugin-sdk/dist/index.js");
-const themeTools = await load("packages/theme-tools/dist/index.js");
 
 /** Only the GitHub API is sent the token; artifacts are public downloads. */
 async function releaseOf(owner, repo, tag) {
@@ -88,9 +83,10 @@ async function fetchArtifact(url, maxBytes) {
 
 /**
  * `gh attestation verify` on the downloaded bytes, holding the signer to the
- * repository the release is in.
+ * repository the release is in and to a run on the release's tag. A `gh` that
+ * hangs is stopped, and fails the check.
  */
-async function verifyAttestation(bytes, fileName, repository) {
+async function verifyAttestation(bytes, fileName, repository, tag) {
   const directory = await mkdtemp(join(tmpdir(), "catalog-check-"));
   const path = join(directory, fileName);
   try {
@@ -103,12 +99,17 @@ async function verifyAttestation(bytes, fileName, repository) {
         path,
         "--repo",
         repository,
+        "--source-ref",
+        `refs/tags/${tag}`,
         "--deny-self-hosted-runners",
       ],
-      { env: process.env },
+      { env: process.env, timeout: 120_000 },
     );
     return null;
   } catch (error) {
+    if (error.killed === true) {
+      return "gh attestation verify did not finish within 120 seconds.";
+    }
     return (error.stderr || error.message).trim().split("\n").at(-1);
   } finally {
     await rm(directory, { recursive: true, force: true });

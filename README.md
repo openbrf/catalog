@@ -18,12 +18,20 @@ A package is listed when:
   `https://github.com/<owner>/<repo>/releases/download/v<version>/<file>.tgz`,
   the tag being `v` followed by the entry's version, and the release not a
   draft or a pre-release;
-- the tarball carries a build attestation from that repository;
-- the entry states the tarball's `sha512` and `bytes`, and both match;
+- the tarball carries a build attestation from that repository's release
+  workflow: made on a GitHub-hosted runner, by a run of that repository on the
+  release's tag `v<version>`;
+- the entry states the tarball's `sha512` and `bytes`, and both match the
+  download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
   id, API version, permissions, personal data categories, actions and protected
   resource; for a theme the name, version, contract and parent, the parent
-  being the built-in theme or a theme in this index;
+  being the built-in theme or a theme in this index, and not deprecated unless
+  the theme is too;
+- the tarball holds files and directories only (no links or devices), at most
+  200 entries, no file over 4 MiB and 8 MiB unpacked in all. The check reads a plugin with the same strict
+  reader an instance reads a theme with, so a plugin over these limits is not
+  listed;
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.

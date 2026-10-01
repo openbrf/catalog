@@ -35,8 +35,9 @@ const HEX_PATTERN = /^[0-9a-f]{128}$/i;
  * @property {(owner: string, repo: string, tag: string) => Promise<Release | null>} releaseOf
  *   The release published under a tag, or null when there is none.
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} fetchArtifact
- * @property {(bytes: Uint8Array, fileName: string, repository: string) => Promise<string | null>} verifyAttestation
- *   Null when the bytes carry a build attestation from the repository, else why not.
+ * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string) => Promise<string | null>} verifyAttestation
+ *   Null when the bytes carry a build attestation from a run on the tag in the
+ *   repository, else why not.
  *
  * @typedef {object} Release
  * @property {boolean} draft
@@ -76,8 +77,10 @@ export async function catalogProblems(input, deps) {
   // Linted once every theme has been read, so a theme extending another in the
   // index is measured with its parent's values in place, as on an instance
   // that installed both.
-  const themeIds = new Set(
-    entries.filter((entry) => entry.type === "theme").map((entry) => entry.id),
+  const themeEntries = new Map(
+    entries
+      .filter((entry) => entry.type === "theme")
+      .map((entry) => [entry.id, entry]),
   );
   for (const entry of entries) {
     if (entry.type !== "theme") {
@@ -85,18 +88,34 @@ export async function catalogProblems(input, deps) {
     }
     const label = `${entry.type} ${entry.id} ${entry.version}`;
     const parent = entry.extends;
+    const listedParent =
+      parent === undefined ? undefined : themeEntries.get(parent);
     if (
       parent !== undefined &&
       parent !== deps.themeTools.BUILT_IN_THEME_ID &&
-      !themeIds.has(parent)
+      listedParent === undefined
     ) {
       problems.push(
         `${label}: extends ${parent}, which is neither the built-in theme nor a theme in this index.`,
+      );
+    } else if (listedParent?.deprecated === true && entry.deprecated !== true) {
+      // An instance installs no deprecated entry anew, so on a new instance
+      // the parent cannot be installed and neither can this theme.
+      problems.push(
+        `${label}: extends ${parent}, which is deprecated in this index, so a new install cannot install its parent.`,
       );
     }
 
     const pkg = themes.get(entry.id);
     if (pkg === undefined) {
+      continue;
+    }
+    if (listedParent !== undefined && !themes.has(listedParent.id)) {
+      // Linted without its parent, the theme would be refused for the
+      // parent's fault; the parent's own problems are reported above.
+      problems.push(
+        `${label}: its parent ${parent} failed its checks, so it is not linted until the parent passes.`,
+      );
       continue;
     }
     const others = [...themes.values()]
@@ -141,11 +160,12 @@ async function entryProblems(entry, deps, themes) {
     return [error.message];
   }
 
-  const release = await deps.releaseOf(
-    location.owner,
-    location.repo,
-    location.tag,
-  );
+  let release;
+  try {
+    release = await deps.releaseOf(location.owner, location.repo, location.tag);
+  } catch (error) {
+    return [`the release could not be read: ${error.message}`];
+  }
   const releaseProblem = releaseProblems(release, location, artifact.bytes);
   if (releaseProblem !== null) {
     return [releaseProblem];
@@ -178,6 +198,7 @@ async function entryProblems(entry, deps, themes) {
     bytes,
     location.file,
     `${location.owner}/${location.repo}`,
+    location.tag,
   );
   if (attestation !== null) {
     return [`the artifact's build attestation does not verify: ${attestation}`];
