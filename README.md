@@ -28,10 +28,12 @@ A package is listed when:
   resource; for a theme the name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
   the theme is too;
-- the tarball holds files and directories only (no links or devices), at most
-  200 entries, no file over 4 MiB and 8 MiB unpacked in all. The check reads a plugin with the same strict
-  reader an instance reads a theme with, so a plugin over these limits is not
-  listed;
+- the tarball is gzipped and holds files and directories only (no links or
+  devices): at most 200 files, no file over 4 MiB and 8 MiB unpacked in all,
+  and every path relative, at most 200 characters, with no `..` or empty
+  segment and no backslash. The check reads a plugin with the same strict
+  reader an instance reads a theme with, so a plugin outside these limits is
+  not listed;
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.

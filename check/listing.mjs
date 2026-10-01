@@ -87,22 +87,26 @@ export async function catalogProblems(input, deps) {
       continue;
     }
     const label = `${entry.type} ${entry.id} ${entry.version}`;
-    const parent = entry.extends;
-    const listedParent =
-      parent === undefined ? undefined : themeEntries.get(parent);
-    if (
-      parent !== undefined &&
-      parent !== deps.themeTools.BUILT_IN_THEME_ID &&
-      listedParent === undefined
-    ) {
+    const { ancestors, unlisted } = ancestry(
+      entry,
+      themeEntries,
+      deps.themeTools.BUILT_IN_THEME_ID,
+    );
+    if (unlisted !== undefined && ancestors.length === 0) {
+      // Nothing to lint against: the lint would only report the same parent
+      // missing again.
       problems.push(
-        `${label}: extends ${parent}, which is neither the built-in theme nor a theme in this index.`,
+        `${label}: extends ${unlisted}, which is neither the built-in theme nor a theme in this index.`,
       );
-    } else if (listedParent?.deprecated === true && entry.deprecated !== true) {
-      // An instance installs no deprecated entry anew, so on a new instance
-      // the parent cannot be installed and neither can this theme.
+      continue;
+    }
+
+    // Catalog policy: a deprecated entry is kept for the instances that have
+    // it and offered to no new one, so a theme still offered extends none.
+    const deprecated = ancestors.find((ancestor) => ancestor.deprecated === true);
+    if (deprecated !== undefined && entry.deprecated !== true) {
       problems.push(
-        `${label}: extends ${parent}, which is deprecated in this index, so a new install cannot install its parent.`,
+        `${label}: extends ${through(ancestors, deprecated)}, which is deprecated in this index, so a new install cannot install ${deprecated.id}.`,
       );
     }
 
@@ -110,11 +114,15 @@ export async function catalogProblems(input, deps) {
     if (pkg === undefined) {
       continue;
     }
-    if (listedParent !== undefined && !themes.has(listedParent.id)) {
-      // Linted without its parent, the theme would be refused for the
-      // parent's fault; the parent's own problems are reported above.
+    // The last ancestor fails when its own parent is not listed.
+    const failed =
+      ancestors.find((ancestor) => !themes.has(ancestor.id)) ??
+      (unlisted === undefined ? undefined : ancestors.at(-1));
+    if (failed !== undefined) {
+      // Linted without that ancestor, the theme would be refused for the
+      // ancestor's fault; the ancestor's own problems are reported above.
       problems.push(
-        `${label}: its parent ${parent} failed its checks, so it is not linted until the parent passes.`,
+        `${label}: extends ${through(ancestors, failed)}, which failed its checks, so it is not linted until ${failed.id} passes.`,
       );
       continue;
     }
@@ -134,6 +142,35 @@ export async function catalogProblems(input, deps) {
   }
 
   return problems;
+}
+
+/**
+ * The themes in the index a theme extends, its parent first, up to the
+ * built-in theme or a theme already on the chain. `unlisted` is the id the
+ * chain stops at when that is neither the built-in theme nor in the index.
+ */
+function ancestry(entry, themeEntries, builtInId) {
+  const ancestors = [];
+  const seen = new Set([entry.id]);
+  let parent = entry.extends;
+  while (parent !== undefined && parent !== builtInId && !seen.has(parent)) {
+    const listed = themeEntries.get(parent);
+    if (listed === undefined) {
+      return { ancestors, unlisted: parent };
+    }
+    ancestors.push(listed);
+    seen.add(parent);
+    parent = listed.extends;
+  }
+  return { ancestors, unlisted: undefined };
+}
+
+/** "B, which extends A": the chain from a theme's parent up to `ancestor`. */
+function through(ancestors, ancestor) {
+  return ancestors
+    .slice(0, ancestors.indexOf(ancestor) + 1)
+    .map((listed) => listed.id)
+    .join(", which extends ");
 }
 
 /**

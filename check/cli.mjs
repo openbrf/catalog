@@ -22,7 +22,10 @@ import { catalogProblems } from "./listing.mjs";
 const run = promisify(execFile);
 
 const catalogPath = resolve(process.argv[2] ?? "catalog.json");
-const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
+
+/** How long `gh attestation verify` may run. */
+const ATTESTATION_TIMEOUT_MS = 120_000;
 
 /** Only the GitHub API is sent the token; artifacts are public downloads. */
 async function releaseOf(owner, repo, tag) {
@@ -103,12 +106,16 @@ async function verifyAttestation(bytes, fileName, repository, tag) {
         `refs/tags/${tag}`,
         "--deny-self-hosted-runners",
       ],
-      { env: process.env, timeout: 120_000 },
+      { env: process.env, timeout: ATTESTATION_TIMEOUT_MS },
     );
     return null;
   } catch (error) {
-    if (error.killed === true) {
-      return "gh attestation verify did not finish within 120 seconds.";
+    // Output over `maxBuffer` stops `gh` too, and is told apart by its code.
+    if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+      return "gh attestation verify wrote more output than the check reads.";
+    }
+    if (error.killed === true && error.signal === "SIGTERM") {
+      return `gh attestation verify did not finish within ${String(ATTESTATION_TIMEOUT_MS / 1000)} seconds.`;
     }
     return (error.stderr || error.message).trim().split("\n").at(-1);
   } finally {

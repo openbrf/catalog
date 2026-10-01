@@ -387,7 +387,9 @@ describe("a listing", () => {
       { version: 1, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: child }]),
     );
-    assert.ok(problems.some((problem) => /absent-theme, which is neither/.test(problem)));
+    assert.deepEqual(problems, [
+      "theme example-theme 1.0.0: extends absent-theme, which is neither the built-in theme nor a theme in this index.",
+    ]);
   });
 
   describe("a theme extending another in the index", () => {
@@ -427,7 +429,7 @@ describe("a listing", () => {
       );
       const own = problems.filter((problem) => problem.startsWith("theme child-theme"));
       assert.deepEqual(own, [
-        "theme child-theme 1.0.0: its parent example-theme failed its checks, so it is not linted until the parent passes.",
+        "theme child-theme 1.0.0: extends example-theme, which failed its checks, so it is not linted until example-theme passes.",
       ]);
       assert.ok(problems.some((problem) => problem.startsWith("theme example-theme")));
     });
@@ -441,8 +443,84 @@ describe("a listing", () => {
         published([themeFile, childFile()]),
       );
       assert.deepEqual(problems, [
-        "theme child-theme 1.0.0: extends example-theme, which is deprecated in this index, so a new install cannot install its parent.",
+        "theme child-theme 1.0.0: extends example-theme, which is deprecated in this index, so a new install cannot install example-theme.",
       ]);
+    });
+
+    describe("through a theme in between", () => {
+      const grandchild = themeArchive({
+        ...THEME_MANIFEST,
+        name: "grandchild-theme",
+        displayName: "Grandchild",
+        extends: "child-theme",
+      });
+      const grandchildEntry = themeEntry(grandchild, {
+        id: "grandchild-theme",
+        extends: "child-theme",
+        artifact: {
+          url: releaseUrl("grandchild-theme", "1.0.0", "grandchild-theme-1.0.0.tgz"),
+          sha512: sri(grandchild),
+          bytes: grandchild.byteLength,
+        },
+      });
+      const grandchildFile = { url: grandchildEntry.artifact.url, bytes: grandchild };
+      const own = (problems) =>
+        problems.filter((problem) => problem.startsWith("theme grandchild-theme"));
+
+      it("passes when all three pass", async () => {
+        const problems = await catalogProblems(
+          { version: 1, entries: [themeEntry(theme), childEntry(), grandchildEntry] },
+          published([themeFile, childFile(), grandchildFile]),
+        );
+        assert.deepEqual(problems, []);
+      });
+
+      it("is not linted when the theme at the top fails its checks", async () => {
+        const top = themeEntry(theme);
+        top.artifact.bytes = theme.byteLength + 1;
+        const problems = await catalogProblems(
+          { version: 1, entries: [top, childEntry(), grandchildEntry] },
+          published([themeFile, childFile(), grandchildFile]),
+        );
+        assert.deepEqual(own(problems), [
+          "theme grandchild-theme 1.0.0: extends child-theme, which extends example-theme, which failed its checks, so it is not linted until example-theme passes.",
+        ]);
+      });
+
+      it("is not linted when the theme in between extends one not in the index", async () => {
+        const orphan = themeArchive({
+          ...THEME_MANIFEST,
+          name: "child-theme",
+          displayName: "Child",
+          extends: "absent-theme",
+        });
+        const orphanEntry = childEntry({
+          extends: "absent-theme",
+          artifact: { ...childEntry().artifact, sha512: sri(orphan), bytes: orphan.byteLength },
+        });
+        const problems = await catalogProblems(
+          { version: 1, entries: [orphanEntry, grandchildEntry] },
+          published([{ url: orphanEntry.artifact.url, bytes: orphan }, grandchildFile]),
+        );
+        assert.deepEqual(problems, [
+          "theme child-theme 1.0.0: extends absent-theme, which is neither the built-in theme nor a theme in this index.",
+          "theme grandchild-theme 1.0.0: extends child-theme, which failed its checks, so it is not linted until child-theme passes.",
+        ]);
+      });
+
+      it("fails when the theme at the top is deprecated and it is not", async () => {
+        const problems = await catalogProblems(
+          {
+            version: 1,
+            entries: [themeEntry(theme, { deprecated: true }), childEntry(), grandchildEntry],
+          },
+          published([themeFile, childFile(), grandchildFile]),
+        );
+        assert.deepEqual(problems, [
+          "theme child-theme 1.0.0: extends example-theme, which is deprecated in this index, so a new install cannot install example-theme.",
+          "theme grandchild-theme 1.0.0: extends child-theme, which extends example-theme, which is deprecated in this index, so a new install cannot install example-theme.",
+        ]);
+      });
     });
 
     it("passes when both are deprecated", async () => {
