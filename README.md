@@ -71,11 +71,16 @@ notes because an immutable release's notes can still be edited.
 The check reads a package without `source.json` as built from the commit its
 attestation names, and cannot tell a release-only repository that left the file
 out. The maintainer reviewing the listing can: a release-only listing without
-the record is not merged. The release repository should pin the commit it
-builds in a `source.json` of its own, moved by a reviewed pull request for each
-release, and its workflow should check out exactly that commit with a
-credential that reads the source repository only and is given only to the
-release job.
+the record is not merged. The release repository must pin the commit it builds
+in a `source.json` of its own, moved by a reviewed pull request for each
+release, with the tag pushed on the merge. Its workflow must read the pin at the
+tagged commit and check out exactly that commit of the source. Reading the
+source takes a credential stored as a secret of the release repository: one
+that reads the source repository and nothing else, given only to the release job
+through an environment whose deployments are limited to `v*` tags. The
+credential is never in the package or the release, and neither the catalog nor
+an instance needs one. The maintainer reviewing the listing also checks these
+steps in the release workflow.
 
 ## How a listing is reviewed
 
