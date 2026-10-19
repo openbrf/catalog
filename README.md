@@ -31,7 +31,7 @@ A package is listed when:
   workflow's own check that the tag is on `main` can be edited away on a branch
   that is then tagged; the catalog asks GitHub instead;
 - a package from a release-only repository carries a `source.json` at its root
-  naming its source, as below;
+  naming its source, a copy of the release repository's own, as below;
 - the entry states the tarball's `sha512` and `bytes`, and both match the
   download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
@@ -63,8 +63,9 @@ holds its release workflow and builds the package from the private source
 Its tarball is still a public download, and neither this check nor an instance
 is given a credential for it.
 
-The package names the source it was built from in a `source.json` at its root,
-beside its `package.json` or `theme.json`:
+The release repository pins the source it builds in a `source.json` at its own
+root, and the release workflow copies that file unchanged into the package's
+root, beside its `package.json` or `theme.json`:
 
 ```json
 {
@@ -73,26 +74,53 @@ beside its `package.json` or `theme.json`:
 }
 ```
 
-The check refuses a `source.json` with any other field, a `repository` that is
-not an https address written without credentials, query or fragment, one that
-is the release's own repository, and a `commit` that is not 40 or 64 lowercase
-hexadecimal characters. It cannot read a private source, so it does not check
-that the commit exists. The record is in the tarball rather than in the release
-notes because an immutable release's notes can still be edited.
+The check reads the release repository's `source.json` at the commit the
+attestation names as the source, and refuses the package unless its own
+`source.json` has the same bytes, or has none when the release repository pins
+none. It also refuses a record:
 
-The check reads a package without `source.json` as built from the commit its
-attestation names, and cannot tell a release-only repository that left the file
-out. The maintainer reviewing the listing can: a release-only listing without
-the record is not merged. The release repository must pin the commit it builds
-in a `source.json` of its own, moved by a reviewed pull request for each
-release, with the tag pushed on the merge. Its workflow must read the pin at the
-tagged commit and check out exactly that commit of the source. Reading the
-source takes a credential stored as a secret of the release repository: one
-that reads the source repository and nothing else, given only to the release job
-through an environment whose deployments are limited to `v*` tags. The
-credential is never in the package or the release, and neither the catalog nor
-an instance needs one. The maintainer reviewing the listing also checks these
-steps in the release workflow.
+- that is not a JSON object with exactly those two fields, each named once;
+- whose `repository` is not exactly `https://github.com/<owner>/<repository>`,
+  without `.git`, a trailing slash or a further path. A source on another host
+  is refused, because the check can ask only GitHub whether a repository is
+  public;
+- whose `repository` is the release's own repository;
+- whose `repository` GitHub reports public. A package whose source is public is
+  released from that repository;
+- whose `commit` is not 40 or 64 lowercase hexadecimal characters.
+
+It cannot read a private source, so it does not check that the commit exists.
+The record is in the tarball rather than in the release notes because an
+immutable release's notes can still be edited. The attestation fixes the
+record but does not prove it: the release workflow writes the package, so the
+record is the author's statement of the source, pinned in the public history of
+the repository that signed it.
+
+The check reads a package without `source.json`, from a release repository that
+pins none, as built from the commit its attestation names, and cannot tell a
+release-only repository that left both out. The maintainer reviewing the
+listing can: a release-only listing without the record is not merged. The
+maintainer also checks that the release repository:
+
+- moves its pin by a reviewed pull request for each release and pushes the tag
+  on the merge, with the tag ruleset above;
+- reads the pin at the tagged commit and checks out exactly that commit of the
+  source, with `persist-credentials: false`;
+- keeps the credential that reads the source as an **environment secret**, of
+  an environment whose deployment rule allows only `v*` tags. A repository
+  secret is open to every workflow and job in the repository, whatever
+  environment a job names;
+- uses a credential that reads the source repository and nothing else: a
+  read-only deploy key, a GitHub App installation token minted in the run for
+  that repository alone with `contents: read`, or a fine-grained personal
+  access token limited to that repository with `contents: read`. Never a
+  classic personal access token, which reaches every repository its owner can;
+- builds in a job that holds the credential and has no `id-token` or
+  `attestations` permission, and attests and publishes in a separate job that
+  has those permissions and not the credential.
+
+The credential is never in the package or the release, and neither the catalog
+nor an instance needs one.
 
 ## How a listing is reviewed
 
@@ -105,9 +133,9 @@ steps in the release workflow.
    schema, looks up the release, downloads the artifact, recomputes its digest
    and size, verifies its attestation and asks GitHub whether the attested
    commit is on the default branch, unpacks it and compares its manifest with
-   the entry, checks a `source.json` if the package has one, then runs the
-   package check or the install lint. The pull request
-   cannot merge until it passes. The schema and checks come from the
+   the entry, checks the package's `source.json` against the release
+   repository's pin, then runs the package check or the install lint. The pull
+   request cannot merge until it passes. The schema and checks come from the
    `openbrf/openbrf` commit pinned as `CORE_REF` in the workflow.
 3. **A person.** The check says whether a package installs, not whether it is
    safe: a plugin runs in the instance's process with its privileges. A

@@ -1,8 +1,9 @@
 /**
  * Checks catalog.json against every rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
- * attestation, and whether the commit that attestation names is on the
- * repository's default branch.
+ * attestation, whether the commit that attestation names is on the
+ * repository's default branch, and for a release-only listing whether the
+ * source it names is public and what its release repository pins.
  *
  *   node check/cli.mjs [catalog.json]
  *
@@ -18,7 +19,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { sdk, themeTools } from "./core.mjs";
-import { catalogProblems } from "./listing.mjs";
+import { SOURCE_FILE, catalogProblems } from "./listing.mjs";
 
 const run = promisify(execFile);
 
@@ -27,6 +28,9 @@ const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
 
 /** How long `gh attestation verify` may run. */
 const ATTESTATION_TIMEOUT_MS = 120_000;
+
+/** The most bytes read of a release repository's `source.json`. */
+const MAX_PIN_BYTES = 64 * 1024;
 
 /** Only the GitHub API is sent the token; artifacts are public downloads. */
 function githubApi(path) {
@@ -76,6 +80,11 @@ async function fetchArtifact(url, maxBytes) {
   if (!response.ok || response.body === null) {
     throw new Error(`${url} answered ${String(response.status)}.`);
   }
+  return readAtMost(response, url, maxBytes);
+}
+
+/** A response's body, refused once it passes `maxBytes`. */
+async function readAtMost(response, url, maxBytes) {
   const chunks = [];
   let total = 0;
   for await (const chunk of response.body) {
@@ -153,15 +162,18 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
       reason: "gh attestation verify wrote output the check cannot read.",
     };
   }
+  const certificates = results.map(
+    (result) => result?.verificationResult?.signature?.certificate,
+  );
   return {
     ok: true,
-    commits: results.flatMap((result) => {
-      const certificate = result?.verificationResult?.signature?.certificate;
-      return [
-        certificate?.sourceRepositoryDigest,
-        certificate?.buildSignerDigest,
-      ];
-    }),
+    commits: certificates.flatMap((certificate) => [
+      certificate?.sourceRepositoryDigest,
+      certificate?.buildSignerDigest,
+    ]),
+    sources: certificates.map(
+      (certificate) => certificate?.sourceRepositoryDigest,
+    ),
   };
 }
 
@@ -205,6 +217,43 @@ async function defaultBranchHas(owner, repo, commit) {
   return { branch, has: status === "identical" || status === "behind" };
 }
 
+/**
+ * Whether GitHub reports the repository public. Asked with the token, which
+ * GitHub still answers `private` for a private repository the token can read;
+ * one it does not show at all is not public.
+ */
+async function repositoryIsPublic(owner, repo) {
+  const response = await githubApi(`/repos/${owner}/${repo}`);
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `GitHub answered ${String(response.status)} for the repository ${owner}/${repo}.`,
+    );
+  }
+  return (await response.json()).private === false;
+}
+
+/**
+ * The repository's own `source.json` at a commit, or null when it has none. A
+ * public download, as an artifact is: the release repository is public.
+ */
+async function sourcePinAt(owner, repo, commit) {
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${SOURCE_FILE}`;
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok || response.body === null) {
+    throw new Error(`${url} answered ${String(response.status)}.`);
+  }
+  return readAtMost(response, url, MAX_PIN_BYTES);
+}
+
 const index = JSON.parse(await readFile(catalogPath, "utf8"));
 const problems = await catalogProblems(index, {
   sdk,
@@ -213,6 +262,8 @@ const problems = await catalogProblems(index, {
   fetchArtifact,
   verifyAttestation,
   defaultBranchHas,
+  repositoryIsPublic,
+  sourcePinAt,
 });
 
 if (problems.length > 0) {
