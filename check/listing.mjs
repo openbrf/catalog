@@ -9,9 +9,10 @@ import { createHash, timingSafeEqual } from "node:crypto";
  * those rules are enforced for the curated catalog.
  *
  * Nothing here reaches the network or the core by itself. The caller hands in
- * the core's own packages and the three things that do reach out - reading a
- * release, downloading an artifact, verifying an attestation - so the rules are
- * tested offline against fixtures and run for real in CI.
+ * the core's own packages and the four things that do reach out - reading a
+ * release, downloading an artifact, verifying an attestation, asking whether a
+ * commit is on the default branch - so the rules are tested offline against
+ * fixtures and run for real in CI.
  */
 
 /**
@@ -24,6 +25,13 @@ export const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 
 /** A path segment of a release URL: no percent-encoding, no dot segments. */
 const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+/**
+ * The workflow, in the package's own repository, whose attestation a listing
+ * carries. One path for every listing, so a workflow added on a branch under
+ * another name signs nothing the catalog accepts.
+ */
+export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 
 /**
  * The file at a package's root in which a package built in a release-only
@@ -43,10 +51,23 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * @property {(owner: string, repo: string, tag: string) => Promise<Release | null>} releaseOf
  *   The release published under a tag, or null when there is none.
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} fetchArtifact
- * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string) => Promise<string | null>} verifyAttestation
- *   Null when the bytes carry a build attestation from a run on the tag in the
- *   repository, else why not. Always asked of the repository the release is
- *   in, never of the source repository a release-only listing names.
+ * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string, workflow: string) => Promise<Attestation>} verifyAttestation
+ *   Whether the bytes carry a build attestation signed by the workflow at that
+ *   path in the repository, in a run on the tag. Always asked of the
+ *   repository the release is in, never of the source repository a
+ *   release-only listing names.
+ * @property {(owner: string, repo: string, commit: string) => Promise<DefaultBranch>} defaultBranchHas
+ *   Whether a commit is the head of the repository's default branch or an
+ *   ancestor of it.
+ *
+ * @typedef {{ ok: true, commits: unknown[] } | { ok: false, reason: string }} Attestation
+ *   When it verifies, the commits its attestations name, as the certificates
+ *   state them: the source each was built from and the commit the signing
+ *   workflow was read at.
+ *
+ * @typedef {object} DefaultBranch
+ * @property {string} branch
+ * @property {boolean} has
  *
  * @typedef {object} Release
  * @property {boolean} draft
@@ -245,14 +266,80 @@ async function entryProblems(entry, deps, themes) {
     location.file,
     `${location.owner}/${location.repo}`,
     location.tag,
+    RELEASE_WORKFLOW,
   );
-  if (attestation !== null) {
-    return [`the artifact's build attestation does not verify: ${attestation}`];
+  if (!attestation.ok) {
+    // gh names the claim that failed only for some; a wrong workflow it reports
+    // as a failure to verify, so the message says what was asked for.
+    return [
+      `the artifact's build attestation does not verify as made by ${RELEASE_WORKFLOW} of ${location.owner}/${location.repo} in a run on ${location.tag}, on a GitHub-hosted runner: ${attestation.reason}`,
+    ];
+  }
+
+  const provenance = await provenanceProblems(
+    attestation.commits,
+    location,
+    deps,
+  );
+  if (provenance.length > 0) {
+    return provenance;
   }
 
   return entry.type === "plugin"
     ? pluginProblems(entry, bytes, location, deps)
     : themeProblems(entry, bytes, location, deps, themes);
+}
+
+/**
+ * Why the attested commits do not tie the artifact to the default branch, or
+ * nothing.
+ *
+ * A tag push runs the release workflow as it is at the tagged commit, so a
+ * workflow that checks its own commit is on `main` can be edited on a branch,
+ * tagged there and still sign. The catalog asks GitHub instead: every commit
+ * an attestation names, the source and the one the workflow was read at, has
+ * to be on the repository's default branch, which only a reviewed pull request
+ * reaches.
+ */
+async function provenanceProblems(commits, location, deps) {
+  if (commits.length === 0) {
+    return [
+      "the artifact's build attestation names no commit it was built from.",
+    ];
+  }
+  const unique = [...new Set(commits)];
+  // An index, not the value: a certificate without the claim gives undefined.
+  const malformed = unique.findIndex(
+    (commit) => typeof commit !== "string" || !COMMIT_PATTERN.test(commit),
+  );
+  if (malformed !== -1) {
+    return [
+      `the artifact's build attestation names ${String(JSON.stringify(unique[malformed]))}, which is not a commit id.`,
+    ];
+  }
+
+  const problems = [];
+  for (const commit of unique) {
+    let answer;
+    try {
+      answer = await deps.defaultBranchHas(
+        location.owner,
+        location.repo,
+        commit,
+      );
+    } catch (error) {
+      problems.push(
+        `whether the attested commit ${commit} is on the default branch could not be read: ${error.message}`,
+      );
+      continue;
+    }
+    if (!answer.has) {
+      problems.push(
+        `the artifact's build attestation names the commit ${commit}, which is not on ${answer.branch} of ${location.owner}/${location.repo}; release only what ${answer.branch} has merged.`,
+      );
+    }
+  }
+  return problems;
 }
 
 /**
@@ -315,7 +402,9 @@ function releaseProblems(release, location, bytes) {
   if (release.immutable !== true) {
     return `the release ${where} is not immutable, so its assets could be replaced.`;
   }
-  const asset = release.assets.find((candidate) => candidate.name === location.file);
+  const asset = release.assets.find(
+    (candidate) => candidate.name === location.file,
+  );
   if (asset === undefined) {
     return `the release ${where} has no asset ${location.file}.`;
   }
@@ -581,7 +670,9 @@ function canonical(value) {
   return JSON.stringify(value, (_key, inner) =>
     inner !== null && typeof inner === "object" && !Array.isArray(inner)
       ? Object.fromEntries(
-          Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          Object.entries(inner).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
         )
       : inner,
   );

@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { sdk, themeTools } from "./core.mjs";
-import { SOURCE_FILE, catalogProblems, releaseLocation } from "./listing.mjs";
+import {
+  RELEASE_WORKFLOW,
+  SOURCE_FILE,
+  catalogProblems,
+  releaseLocation,
+} from "./listing.mjs";
 
 const encode = (value) =>
   new TextEncoder().encode(
@@ -122,9 +127,15 @@ function themeEntry(bytes, overrides = {}) {
   };
 }
 
+/** The commit every fixture attestation names unless a test says otherwise. */
+const ON_MAIN = "a".repeat(40);
+/** A commit on a branch that never merged. */
+const OFF_MAIN = "b".repeat(40);
+
 /**
  * Dependencies answering from a set of published files: each URL is an asset
- * of an immutable release holding exactly those bytes, with an attestation.
+ * of an immutable release holding exactly those bytes, with an attestation
+ * built from a commit on main.
  */
 function published(files, options = {}) {
   const byUrl = new Map(files.map((file) => [file.url, file.bytes]));
@@ -158,7 +169,10 @@ function published(files, options = {}) {
       return bytes;
     },
     async verifyAttestation() {
-      return options.attestation ?? null;
+      return options.attestation ?? { ok: true, commits: [ON_MAIN, ON_MAIN] };
+    },
+    async defaultBranchHas(_owner, _repo, commit) {
+      return { branch: "main", has: commit === ON_MAIN };
     },
   };
 }
@@ -322,9 +336,15 @@ describe("a listing", () => {
   it("holds the attestation to the release's repository and tag", async () => {
     const deps = published([pluginFile]);
     const calls = [];
-    deps.verifyAttestation = async (_bytes, fileName, repository, tag) => {
-      calls.push({ fileName, repository, tag });
-      return null;
+    deps.verifyAttestation = async (
+      _bytes,
+      fileName,
+      repository,
+      tag,
+      workflow,
+    ) => {
+      calls.push({ fileName, repository, tag, workflow });
+      return { ok: true, commits: [ON_MAIN, ON_MAIN] };
     };
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
@@ -336,17 +356,145 @@ describe("a listing", () => {
         fileName: "occupancy-1.0.0.tgz",
         repository: "example/openbrf-occupancy",
         tag: "v1.0.0",
+        workflow: ".github/workflows/release.yml",
       },
     ]);
+    assert.equal(RELEASE_WORKFLOW, ".github/workflows/release.yml");
   });
 
   it("fails when the attestation does not verify", async () => {
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
-      published([pluginFile], { attestation: "no attestation found" }),
+      published([pluginFile], {
+        attestation: { ok: false, reason: "no attestation found" },
+      }),
     );
     assert.equal(problems.length, 1);
-    assert.match(problems[0], /attestation does not verify/);
+    assert.match(
+      problems[0],
+      /attestation does not verify as made by \.github\/workflows\/release\.yml of example\/openbrf-occupancy in a run on v1\.0\.0, on a GitHub-hosted runner: no attestation found$/,
+    );
+  });
+
+  // A tag push runs the workflow as the tagged commit has it, so its own check
+  // that the commit is on main can be deleted on a branch that is then tagged.
+  it("fails when the attested source is a commit main does not have", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      published([pluginFile, themeFile], {
+        attestation: { ok: true, commits: [OFF_MAIN, OFF_MAIN] },
+      }),
+    );
+    assert.equal(problems.length, 2);
+    assert.match(
+      problems[0],
+      /^plugin occupancy 1\.0\.0: the artifact's build attestation names the commit b{40}, which is not on main of example\/openbrf-occupancy;/,
+    );
+    assert.match(
+      problems[1],
+      /^theme example-theme 1\.0\.0: .*b{40}, which is not on main/,
+    );
+  });
+
+  it("fails when the signing workflow was read at a commit main does not have", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      published([pluginFile], {
+        attestation: { ok: true, commits: [ON_MAIN, OFF_MAIN] },
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /names the commit b{40}, which is not on main/);
+  });
+
+  it("fails when any of several attestations is off main", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      published([pluginFile], {
+        attestation: {
+          ok: true,
+          commits: [ON_MAIN, ON_MAIN, OFF_MAIN, OFF_MAIN],
+        },
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /b{40}, which is not on main/);
+  });
+
+  it("asks about each attested commit once, in the release's repository", async () => {
+    const deps = published([pluginFile], {
+      attestation: { ok: true, commits: [ON_MAIN, ON_MAIN, ON_MAIN] },
+    });
+    const calls = [];
+    deps.defaultBranchHas = async (owner, repo, commit) => {
+      calls.push({ owner, repo, commit });
+      return { branch: "main", has: true };
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      deps,
+    );
+    assert.deepEqual(problems, []);
+    assert.deepEqual(calls, [
+      { owner: "example", repo: "openbrf-occupancy", commit: ON_MAIN },
+    ]);
+  });
+
+  it("fails when the attestation names no commit, or something else", async () => {
+    for (const commits of [
+      [],
+      [undefined, undefined],
+      [ON_MAIN, "main"],
+      [ON_MAIN.toUpperCase(), ON_MAIN.toUpperCase()],
+      [`${ON_MAIN}/../x`, ON_MAIN],
+    ]) {
+      const deps = published([pluginFile], {
+        attestation: { ok: true, commits },
+      });
+      deps.defaultBranchHas = async () => {
+        throw new Error("not asked about a malformed commit");
+      };
+      const problems = await catalogProblems(
+        { version: 1, entries: [pluginEntry(plugin)] },
+        deps,
+      );
+      assert.equal(problems.length, 1, JSON.stringify(commits));
+      assert.match(
+        problems[0],
+        /names no commit it was built from|which is not a commit id/,
+        JSON.stringify(commits),
+      );
+    }
+  });
+
+  it("fails when GitHub cannot say whether main has the commit", async () => {
+    const deps = published([pluginFile]);
+    deps.defaultBranchHas = async () => {
+      throw new Error("GitHub answered 503.");
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      deps,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /a{40} is on the default branch could not be read: GitHub answered 503\.$/,
+    );
+  });
+
+  it("names the default branch GitHub reports", async () => {
+    const deps = published([pluginFile]);
+    deps.defaultBranchHas = async () => ({ branch: "trunk", has: false });
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      deps,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /which is not on trunk of .*; release only what trunk has merged\.$/,
+    );
   });
 
   it("fails when the plugin asks for more than the entry declares", async () => {
@@ -595,8 +743,11 @@ describe("a listing from a release-only repository", () => {
   function signedIn(signer) {
     return async (_bytes, _fileName, repository) =>
       repository === signer
-        ? null
-        : `no attestations found for subject in ${repository}`;
+        ? { ok: true, commits: [ON_MAIN, ON_MAIN] }
+        : {
+            ok: false,
+            reason: `no attestations found for subject in ${repository}`,
+          };
   }
 
   it("passes when the release repository attests the package and it names its source", async () => {
@@ -609,7 +760,7 @@ describe("a listing from a release-only repository", () => {
     const asked = [];
     deps.verifyAttestation = async (_bytes, _fileName, repository) => {
       asked.push(repository);
-      return null;
+      return { ok: true, commits: [ON_MAIN, ON_MAIN] };
     };
     const problems = await catalogProblems(
       { version: 1, entries: [plugin, theme] },
@@ -631,9 +782,11 @@ describe("a listing from a release-only repository", () => {
       { version: 1, entries: [entry] },
       deps,
     );
-    assert.deepEqual(problems, [
-      "plugin occupancy 1.0.0: the artifact's build attestation does not verify: no attestations found for subject in example/openbrf-occupancy",
-    ]);
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /^plugin occupancy 1\.0\.0: the artifact's build attestation does not verify as made by .* of example\/openbrf-occupancy .*: no attestations found for subject in example\/openbrf-occupancy$/,
+    );
   });
 
   it("passes when that same attestation is made in its own repository", async () => {

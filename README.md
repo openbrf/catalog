@@ -21,9 +21,15 @@ A package is listed when:
   release-only repository that builds it from source kept elsewhere (see
   below);
 - the tarball carries a build attestation from that repository's release
-  workflow: made on a GitHub-hosted runner, by a run of that repository on the
-  release's tag `v<version>`. An attestation made in any other repository,
-  the source repository of a release-only listing included, is refused;
+  workflow, `.github/workflows/release.yml`: made on a GitHub-hosted runner, by
+  a run of that repository on the release's tag `v<version>`. An attestation
+  made in any other repository, the source repository of a release-only listing
+  included, is refused;
+- the commits that attestation names, the source it was built from and the
+  commit its workflow was read at, are on the repository's default branch. A
+  tag push runs the workflow as the tagged commit has it, so a release
+  workflow's own check that the tag is on `main` can be edited away on a branch
+  that is then tagged; the catalog asks GitHub instead;
 - a package from a release-only repository carries a `source.json` at its root
   naming its source, as below;
 - the entry states the tarball's `sha512` and `bytes`, and both match the
@@ -42,6 +48,12 @@ A package is listed when:
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.
+
+A listed repository should also hold its `v*` tags to a tag ruleset that lets
+only its maintainers create, move or delete one. The check does not read a
+repository's settings, and refuses a release built off the default branch
+whatever they are; the ruleset stops anyone who can merely push from making
+such a release in the first place.
 
 ### A release-only repository
 
@@ -91,7 +103,8 @@ steps in the release workflow.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
    every push to `main` and every night. It reads the index with the core's own
    schema, looks up the release, downloads the artifact, recomputes its digest
-   and size, verifies its attestation, unpacks it and compares its manifest with
+   and size, verifies its attestation and asks GitHub whether the attested
+   commit is on the default branch, unpacks it and compares its manifest with
    the entry, checks a `source.json` if the package has one, then runs the
    package check or the install lint. The pull request
    cannot merge until it passes. The schema and checks come from the
