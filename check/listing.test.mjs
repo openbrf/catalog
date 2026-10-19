@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { sdk, themeTools } from "./core.mjs";
-import { catalogProblems, releaseLocation } from "./listing.mjs";
+import { SOURCE_FILE, catalogProblems, releaseLocation } from "./listing.mjs";
 
 const encode = (value) =>
   new TextEncoder().encode(
@@ -29,9 +29,14 @@ const PLUGIN_PACKAGE = {
   },
 };
 
-function pluginArchive(packageJson = PLUGIN_PACKAGE) {
+/** `extra` maps a path in the package to its content. */
+function pluginArchive(packageJson = PLUGIN_PACKAGE, extra = {}) {
   return themeTools.writeThemeArchive(
     new Map([
+      ...Object.entries(extra).map(([path, content]) => [
+        `package/${path}`,
+        encode(content),
+      ]),
       ["package/package.json", encode(packageJson)],
       [
         "package/dist/server.cjs",
@@ -45,9 +50,15 @@ function pluginArchive(packageJson = PLUGIN_PACKAGE) {
   );
 }
 
-function themeArchive(manifest) {
+function themeArchive(manifest, extra = {}) {
   return themeTools.writeThemeArchive(
-    new Map([["theme.json", encode(manifest)]]),
+    new Map([
+      ["theme.json", encode(manifest)],
+      ...Object.entries(extra).map(([path, content]) => [
+        path,
+        encode(content),
+      ]),
+    ]),
   );
 }
 
@@ -552,7 +563,193 @@ describe("a listing", () => {
       published([{ url: entry.artifact.url, bytes: illegible }]),
     );
     assert.ok(problems.length > 0);
-    assert.ok(problems.every((problem) => /install lint refuses/.test(problem)));
+    assert.ok(
+      problems.every((problem) => /install lint refuses/.test(problem)),
+    );
+  });
+});
+
+describe("a listing from a release-only repository", () => {
+  const SOURCE = {
+    repository: "https://github.com/example-private/occupancy",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+  };
+  const releaseOnlyPlugin = pluginArchive(PLUGIN_PACKAGE, {
+    [SOURCE_FILE]: SOURCE,
+  });
+  const releaseOnlyTheme = themeArchive(THEME_MANIFEST, {
+    [SOURCE_FILE]: SOURCE,
+  });
+
+  /** The plugin entry and its published file, with `source` as its record. */
+  function withSource(source) {
+    const bytes = pluginArchive(PLUGIN_PACKAGE, { [SOURCE_FILE]: source });
+    const entry = pluginEntry(bytes);
+    return { entry, file: { url: entry.artifact.url, bytes } };
+  }
+
+  /**
+   * The attestation as `gh attestation verify --repo` answers it: found only
+   * when the repository asked for is the one whose workflow signed it.
+   */
+  function signedIn(signer) {
+    return async (_bytes, _fileName, repository) =>
+      repository === signer
+        ? null
+        : `no attestations found for subject in ${repository}`;
+  }
+
+  it("passes when the release repository attests the package and it names its source", async () => {
+    const plugin = pluginEntry(releaseOnlyPlugin);
+    const theme = themeEntry(releaseOnlyTheme);
+    const deps = published([
+      { url: plugin.artifact.url, bytes: releaseOnlyPlugin },
+      { url: theme.artifact.url, bytes: releaseOnlyTheme },
+    ]);
+    const asked = [];
+    deps.verifyAttestation = async (_bytes, _fileName, repository) => {
+      asked.push(repository);
+      return null;
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: [plugin, theme] },
+      deps,
+    );
+    assert.deepEqual(problems, []);
+    // Held to the repository the release is in, never to the source's.
+    assert.deepEqual(asked, [
+      "example/openbrf-occupancy",
+      "example/example-theme",
+    ]);
+  });
+
+  it("fails when the attestation comes from the source repository, not its own", async () => {
+    const { entry, file } = withSource(SOURCE);
+    const deps = published([file]);
+    deps.verifyAttestation = signedIn("example-private/occupancy");
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      deps,
+    );
+    assert.deepEqual(problems, [
+      "plugin occupancy 1.0.0: the artifact's build attestation does not verify: no attestations found for subject in example/openbrf-occupancy",
+    ]);
+  });
+
+  it("passes when that same attestation is made in its own repository", async () => {
+    const { entry, file } = withSource(SOURCE);
+    const deps = published([file]);
+    deps.verifyAttestation = signedIn("example/openbrf-occupancy");
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      deps,
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  const refused = [
+    ["it is not JSON", "{", /is not readable JSON/],
+    ["it is a list", [SOURCE], /is not an object naming/],
+    [
+      "it has a field a listing does not define",
+      { ...SOURCE, branch: "main" },
+      /has fields a listing does not define: branch\./,
+    ],
+    [
+      "it names no commit",
+      { repository: SOURCE.repository },
+      /names no `commit`/,
+    ],
+    [
+      "it names no repository",
+      { commit: SOURCE.commit },
+      /names no `repository`/,
+    ],
+    [
+      "the commit is abbreviated",
+      { ...SOURCE, commit: SOURCE.commit.slice(0, 12) },
+      /not a full commit id/,
+    ],
+    [
+      "the commit is in capitals",
+      { ...SOURCE, commit: SOURCE.commit.toUpperCase() },
+      /not a full commit id/,
+    ],
+    [
+      "the commit is a number",
+      { ...SOURCE, commit: 1 },
+      /not a full commit id/,
+    ],
+    [
+      "the repository is not https",
+      { ...SOURCE, repository: "http://github.com/example-private/occupancy" },
+      /not an https address/,
+    ],
+    [
+      "the repository carries credentials",
+      {
+        ...SOURCE,
+        repository: "https://token@github.com/example-private/occupancy",
+      },
+      /not an https address/,
+    ],
+    [
+      "the repository carries a query",
+      {
+        ...SOURCE,
+        repository: "https://github.com/example-private/occupancy?ref=main",
+      },
+      /not an https address/,
+    ],
+    [
+      "the repository is not written as it reads",
+      { ...SOURCE, repository: "https://GitHub.com/example-private/occupancy" },
+      /not an https address/,
+    ],
+    [
+      "the repository is a host alone",
+      { ...SOURCE, repository: "https://github.com/" },
+      /not an https address/,
+    ],
+    [
+      "the repository is the release's own",
+      {
+        ...SOURCE,
+        repository: "https://github.com/Example/openbrf-occupancy.git",
+      },
+      /names example\/openbrf-occupancy, the repository it is released from/,
+    ],
+  ];
+  for (const [why, source, message] of refused) {
+    it(`fails when its ${SOURCE_FILE} is refused because ${why}`, async () => {
+      const { entry, file } = withSource(source);
+      const problems = await catalogProblems(
+        { version: 1, entries: [entry] },
+        published([file]),
+      );
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /^plugin occupancy 1\.0\.0: the package's source\.json /,
+      );
+      assert.match(problems[0], message);
+    });
+  }
+
+  it("fails a theme whose record is refused, and does not lint it", async () => {
+    const bytes = themeArchive(THEME_MANIFEST, {
+      [SOURCE_FILE]: { ...SOURCE, commit: "main" },
+    });
+    const entry = themeEntry(bytes);
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /^theme example-theme 1\.0\.0: .*"main", which is not a full commit id/,
+    );
   });
 });
 

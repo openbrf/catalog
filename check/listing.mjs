@@ -25,8 +25,16 @@ export const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 /** A path segment of a release URL: no percent-encoding, no dot segments. */
 const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
+/**
+ * The file at a package's root in which a package built in a release-only
+ * repository names the source it was built from.
+ */
+export const SOURCE_FILE = "source.json";
+
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
+/** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
+const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
  * @typedef {object} ListingDeps
@@ -37,7 +45,8 @@ const HEX_PATTERN = /^[0-9a-f]{128}$/i;
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} fetchArtifact
  * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string) => Promise<string | null>} verifyAttestation
  *   Null when the bytes carry a build attestation from a run on the tag in the
- *   repository, else why not.
+ *   repository, else why not. Always asked of the repository the release is
+ *   in, never of the source repository a release-only listing names.
  *
  * @typedef {object} Release
  * @property {boolean} draft
@@ -242,8 +251,8 @@ async function entryProblems(entry, deps, themes) {
   }
 
   return entry.type === "plugin"
-    ? pluginProblems(entry, bytes, deps)
-    : themeProblems(entry, bytes, deps, themes);
+    ? pluginProblems(entry, bytes, location, deps)
+    : themeProblems(entry, bytes, location, deps, themes);
 }
 
 /**
@@ -320,7 +329,7 @@ function releaseProblems(release, location, bytes) {
  * A plugin package: it agrees with its entry and passes the SDK's package
  * check, the same one a plugin's own CI runs.
  */
-function pluginProblems(entry, bytes, deps) {
+function pluginProblems(entry, bytes, location, deps) {
   let files;
   try {
     files = deps.themeTools.readThemeArchive(bytes);
@@ -352,6 +361,7 @@ function pluginProblems(entry, bytes, deps) {
   const server = files.get(serverPath);
 
   const problems = [
+    ...sourceProblems(files, location),
     ...deps.sdk.pluginPackageProblems({
       packageJson,
       files: [...files.keys()],
@@ -397,7 +407,7 @@ function pluginProblems(entry, bytes, deps) {
  * A theme package: it agrees with its entry. The lint runs once every theme
  * in the index has been read.
  */
-function themeProblems(entry, bytes, deps, themes) {
+function themeProblems(entry, bytes, location, deps, themes) {
   const read = deps.themeTools.readThemePackage(bytes);
   if (!read.ok) {
     return read.issues.map(
@@ -406,7 +416,7 @@ function themeProblems(entry, bytes, deps, themes) {
   }
 
   const { manifest } = read.package;
-  const problems = [];
+  const problems = sourceProblems(read.package.files, location);
   const disagreements = [
     ["name", entry.id, manifest.name],
     ["version", entry.version, manifest.version],
@@ -425,6 +435,112 @@ function themeProblems(entry, bytes, deps, themes) {
     themes.set(entry.id, read.package);
   }
   return problems;
+}
+
+/**
+ * Why the package's record of the source it was built from is not one a
+ * listing accepts, or nothing.
+ *
+ * A package released from a release-only repository names the repository its
+ * source is in and the commit it was built from, inside the attested bytes
+ * rather than in the release notes, which stay editable on an immutable
+ * release. The source may be private, so the record is held to its form: the
+ * check cannot read whether the commit exists. A package without the record
+ * was built from the commit its attestation names.
+ */
+function sourceProblems(files, location) {
+  const file = files.get(SOURCE_FILE);
+  if (file === undefined) {
+    return [];
+  }
+
+  let record;
+  try {
+    record = JSON.parse(new TextDecoder("utf8", { fatal: true }).decode(file));
+  } catch {
+    return [`the package's ${SOURCE_FILE} is not readable JSON.`];
+  }
+  if (record === null || typeof record !== "object" || Array.isArray(record)) {
+    return [
+      `the package's ${SOURCE_FILE} is not an object naming the source's \`repository\` and \`commit\`.`,
+    ];
+  }
+
+  const problems = [];
+  const unknown = Object.keys(record).filter(
+    (field) => field !== "repository" && field !== "commit",
+  );
+  if (unknown.length > 0) {
+    problems.push(
+      `the package's ${SOURCE_FILE} has fields a listing does not define: ${unknown.join(", ")}.`,
+    );
+  }
+  const repository = sourceRepositoryProblem(record.repository, location);
+  if (repository !== null) {
+    problems.push(repository);
+  }
+  if (record.commit === undefined) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names no \`commit\` it was built from.`,
+    );
+  } else if (
+    typeof record.commit !== "string" ||
+    !COMMIT_PATTERN.test(record.commit)
+  ) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names the commit ${JSON.stringify(record.commit)}, which is not a full commit id of 40 or 64 lowercase hexadecimal characters.`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * Why the repository a source record names is not one, or null.
+ *
+ * Read as written, as the artifact URL is. The release's own repository is
+ * refused: a package built there has its commit named by its attestation, and
+ * a record repeating it could only disagree.
+ */
+function sourceRepositoryProblem(repository, location) {
+  if (repository === undefined) {
+    return `the package's ${SOURCE_FILE} names no \`repository\` its source is in.`;
+  }
+  const refuse = `the package's ${SOURCE_FILE} names the repository ${JSON.stringify(repository)}, which is not an https address written without credentials, query or fragment.`;
+  if (typeof repository !== "string") {
+    return refuse;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(repository);
+  } catch {
+    return refuse;
+  }
+  if (
+    parsed.href !== repository ||
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.pathname === "/"
+  ) {
+    return refuse;
+  }
+
+  // GitHub reads owner and repository names case-insensitively, with or
+  // without `.git`.
+  const path = parsed.pathname
+    .replace(/\/$/, "")
+    .replace(/\.git$/, "")
+    .toLowerCase();
+  if (
+    parsed.host === "github.com" &&
+    path === `/${location.owner}/${location.repo}`.toLowerCase()
+  ) {
+    return `the package's ${SOURCE_FILE} names ${location.owner}/${location.repo}, the repository it is released from; a package built there has no ${SOURCE_FILE}, because its attestation names the commit.`;
+  }
+  return null;
 }
 
 /**

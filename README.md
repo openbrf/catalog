@@ -13,14 +13,19 @@ read with `parseCatalogIndex` from `@openbrf/plugin-sdk`.
 
 A package is listed when:
 
-- its artifact is an asset of an immutable GitHub release of the repository its
-  source lives in, at
+- its artifact is an asset of an immutable GitHub release of the listing's own
+  public repository, at
   `https://github.com/<owner>/<repo>/releases/download/v<version>/<file>.tgz`,
   the tag being `v` followed by the entry's version, and the release not a
-  draft or a pre-release;
+  draft or a pre-release. That repository is the one its source lives in, or a
+  release-only repository that builds it from source kept elsewhere (see
+  below);
 - the tarball carries a build attestation from that repository's release
   workflow: made on a GitHub-hosted runner, by a run of that repository on the
-  release's tag `v<version>`;
+  release's tag `v<version>`. An attestation made in any other repository,
+  the source repository of a release-only listing included, is refused;
+- a package from a release-only repository carries a `source.json` at its root
+  naming its source, as below;
 - the entry states the tarball's `sha512` and `bytes`, and both match the
   download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
@@ -38,6 +43,40 @@ A package is listed when:
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.
 
+### A release-only repository
+
+A package whose source is not public is listed from a public repository that
+holds its release workflow and builds the package from the private source
+([ADR 0044](https://github.com/openbrf/openbrf/blob/main/docs/adr/0044-a-listing-released-from-a-repository-without-its-source.md)).
+Its tarball is still a public download, and neither this check nor an instance
+is given a credential for it.
+
+The package names the source it was built from in a `source.json` at its root,
+beside its `package.json` or `theme.json`:
+
+```json
+{
+  "repository": "https://github.com/<owner>/<source repository>",
+  "commit": "<full commit id>"
+}
+```
+
+The check refuses a `source.json` with any other field, a `repository` that is
+not an https address written without credentials, query or fragment, one that
+is the release's own repository, and a `commit` that is not 40 or 64 lowercase
+hexadecimal characters. It cannot read a private source, so it does not check
+that the commit exists. The record is in the tarball rather than in the release
+notes because an immutable release's notes can still be edited.
+
+The check reads a package without `source.json` as built from the commit its
+attestation names, and cannot tell a release-only repository that left the file
+out. The maintainer reviewing the listing can: a release-only listing without
+the record is not merged. The release repository should pin the commit it
+builds in a `source.json` of its own, moved by a reviewed pull request for each
+release, and its workflow should check out exactly that commit with a
+credential that reads the source repository only and is given only to the
+release job.
+
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
@@ -48,7 +87,8 @@ A package is listed when:
    every push to `main` and every night. It reads the index with the core's own
    schema, looks up the release, downloads the artifact, recomputes its digest
    and size, verifies its attestation, unpacks it and compares its manifest with
-   the entry, then runs the package check or the install lint. The pull request
+   the entry, checks a `source.json` if the package has one, then runs the
+   package check or the install lint. The pull request
    cannot merge until it passes. The schema and checks come from the
    `openbrf/openbrf` commit pinned as `CORE_REF` in the workflow.
 3. **A person.** The check says whether a package installs, not whether it is
