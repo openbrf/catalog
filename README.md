@@ -94,7 +94,12 @@ with releases. Neither the check nor the reviewer holds a listing to this rule.
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
    will be asked to consent to, confirms that the listed repository has the tag
-   ruleset above, and approves the pull request. Every file in this repository
+   ruleset above, and approves the pull request. The reviewer also checks each
+   new pin in [`repositories.json`](repositories.json) against
+   `gh api repos/<owner>/<repo>`, and refuses a change to or removal of an
+   existing pin that the pull request does not explain: a repository's id never
+   changes, so a different id for a listed repository means a different
+   repository. Every file in this repository
    is owned by the maintainers, the check included, so a change to the check is
    reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets
