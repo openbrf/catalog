@@ -35,8 +35,10 @@ A package is listed when:
 - the entry states the tarball's `sha512` and `bytes`, and both match the
   download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
-  id, API version, permissions, personal data categories, actions and protected
-  resource; for a theme the name, version, contract and parent, the parent
+  id, API version, permissions, personal data categories, actions, protected
+  resource and recipients (each one's id, origin, purpose and categories, the
+  board reading the entry's before anything is downloaded); for a theme the
+  name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
   the theme is too;
 - the tarball is gzipped and holds files and directories only (no links or
@@ -47,7 +49,14 @@ A package is listed when:
   not listed;
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
-  `@openbrf/theme-tools`.
+  `@openbrf/theme-tools`;
+- a plugin connects to nothing outside the instance that it does not declare
+  in its `recipients`
+  ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)).
+  A declaration is not a fence: a plugin runs with the instance's privileges,
+  and nothing in the host stops a connection it did not declare. The check
+  cannot see one either, so the maintainer reading the server bundle holds the
+  plugin to it (see below).
 
 A listed repository should also hold its `v*` tags to a tag ruleset that lets
 only its maintainers create, move or delete one. The check does not read a
@@ -141,7 +150,9 @@ nor an instance needs one.
    safe: a plugin runs in the instance's process with its privileges. A
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
-   will be asked to consent to, and approves the pull request. Every file in
+   will be asked to consent to, checks that every place the bundle connects to
+   outside the instance is one of its `recipients` and receives no more than
+   that recipient declares, and approves the pull request. Every file in
    this repository is owned by the maintainers, the check included, so a change
    to the check is reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets

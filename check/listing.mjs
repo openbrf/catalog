@@ -500,6 +500,15 @@ async function pluginProblems(entry, bytes, built, deps) {
         entry.oauthProtectedResource ?? null,
         manifest.oauthProtectedResource ?? null,
       ],
+      // The board consents to the entry's recipients, purpose included,
+      // before anything is downloaded. Absent is none on both sides: a
+      // version 1 entry cannot carry them, and a core that does not know
+      // them yet reads them from neither.
+      [
+        "recipients",
+        recipientSet(entry.recipients ?? []),
+        recipientSet(manifest.recipients ?? []),
+      ],
     ];
     for (const [field, listed, packaged] of disagreements) {
       if (canonical(listed) !== canonical(packaged)) {
@@ -831,6 +840,15 @@ function sorted(values) {
 /** Actions compared as a set, each with its keys in one order. */
 function actionSet(actions) {
   return actions.map(canonical).sort();
+}
+
+/** Recipients compared as a set, each with its categories in one order. */
+function recipientSet(recipients) {
+  return recipients
+    .map((recipient) =>
+      canonical({ ...recipient, personalData: sorted(recipient.personalData) }),
+    )
+    .sort();
 }
 
 /** JSON with object keys sorted, so equal values print equally. */
