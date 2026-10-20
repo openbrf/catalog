@@ -535,6 +535,77 @@ describe("a listing", () => {
     assert.match(problems[0], /personal data categories/);
   });
 
+  describe("a plugin's ai", () => {
+    // A core older than the `ai` field reads it from neither side, so the
+    // disagreement cannot be shown until CORE_REF moves past it.
+    const knowsAi =
+      sdk.parsePluginPackage({
+        ...PLUGIN_PACKAGE,
+        openbrf: { ...PLUGIN_PACKAGE.openbrf, ai: true },
+      }).value?.openbrf.ai === true;
+
+    const aiPackage = (ai) =>
+      pluginArchive({
+        ...PLUGIN_PACKAGE,
+        openbrf: { ...PLUGIN_PACKAGE.openbrf, ai },
+      });
+
+    async function problemsOf(bytes, overrides) {
+      const entry = pluginEntry(bytes, overrides);
+      return catalogProblems(
+        { version: 1, entries: [entry] },
+        published([{ url: entry.artifact.url, bytes }]),
+      );
+    }
+
+    it("passes when the entry and the package both say nothing", async () => {
+      assert.deepEqual(await problemsOf(plugin), []);
+    });
+
+    it(
+      "passes when the entry and the package both declare it",
+      { skip: !knowsAi },
+      async () => {
+        const bytes = aiPackage(true);
+        assert.deepEqual(await problemsOf(bytes, { ai: true }), []);
+      },
+    );
+
+    it(
+      "passes when the entry says nothing and the package declares false",
+      { skip: !knowsAi },
+      async () => {
+        assert.deepEqual(await problemsOf(aiPackage(false)), []);
+      },
+    );
+
+    it(
+      "fails when the package declares it and the entry does not",
+      { skip: !knowsAi },
+      async () => {
+        const problems = await problemsOf(aiPackage(true));
+        assert.equal(problems.length, 1);
+        assert.match(
+          problems[0],
+          /the entry's ai is false, the package's is true/,
+        );
+      },
+    );
+
+    it(
+      "fails when the entry declares it and the package does not",
+      { skip: !knowsAi },
+      async () => {
+        const problems = await problemsOf(plugin, { ai: true });
+        assert.equal(problems.length, 1);
+        assert.match(
+          problems[0],
+          /the entry's ai is true, the package's is false/,
+        );
+      },
+    );
+  });
+
   it("fails when the plugin fails the package check", async () => {
     const withDependency = pluginArchive({
       ...PLUGIN_PACKAGE,
