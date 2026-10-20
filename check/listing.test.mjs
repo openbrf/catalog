@@ -13,6 +13,7 @@ import {
   RELEASE_WORKFLOW,
   catalogProblems,
   expectedClaims,
+  parseRepositoryPins,
   releaseLocation,
 } from "./listing.mjs";
 
@@ -116,6 +117,20 @@ function themeEntry(bytes, overrides = {}) {
   };
 }
 
+/**
+ * The ids pinned for each repository the fixtures list from, as in
+ * `repositories.json`. Each repository has its own, so a certificate from one
+ * is not mistaken for another's.
+ */
+const PINS = Object.fromEntries(
+  ["openbrf-occupancy", "example-theme", "child-theme", "grandchild-theme"].map(
+    (repo, index) => [
+      `example/${repo}`,
+      { id: String(1000 + index), ownerId: "42" },
+    ],
+  ),
+);
+
 /** The commit every fixture attestation names unless a test says otherwise. */
 const ON_MAIN = "a".repeat(40);
 /** A commit on a branch that never merged. */
@@ -137,6 +152,8 @@ function certificate(repository, tag, overrides = {}) {
     buildSignerDigest: ON_MAIN,
     runnerEnvironment: "github-hosted",
     sourceRepositoryURI: uri,
+    sourceRepositoryIdentifier: PINS[repository].id,
+    sourceRepositoryOwnerIdentifier: PINS[repository].ownerId,
     sourceRepositoryDigest: ON_MAIN,
     sourceRepositoryRef: `refs/tags/${tag}`,
     buildConfigURI: workflow,
@@ -150,13 +167,15 @@ function certificate(repository, tag, overrides = {}) {
  * Dependencies answering from a set of published files: each URL is an asset
  * of an immutable release holding exactly those bytes, with an attestation
  * built from a commit on main. `options.certificates` changes the attestation:
- * one certificate for each set of claims it overrides.
+ * one certificate for each set of claims it overrides; `options.pins` the
+ * repositories pinned in place of `PINS`.
  */
 function published(files, options = {}) {
   const byUrl = new Map(files.map((file) => [file.url, file.bytes]));
   return {
     sdk,
     themeTools,
+    repositoryPins: options.pins ?? PINS,
     async releaseOf(owner, repo, tag) {
       const prefix = `https://github.com/${owner}/${repo}/releases/download/${tag}/`;
       const assets = files
@@ -384,6 +403,37 @@ describe("a listing", () => {
     assert.equal(RELEASE_WORKFLOW, ".github/workflows/release.yml");
   });
 
+  it("fails when the repository has no ids pinned, saying how to get them", async () => {
+    const deps = published([pluginFile], { pins: {} });
+    deps.defaultBranchHas = async () => {
+      throw new Error("not asked about a repository nobody pinned");
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      deps,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /^plugin occupancy 1\.0\.0: example\/openbrf-occupancy is not in repositories\.json, .*gh api repos\/example\/openbrf-occupancy /,
+    );
+  });
+
+  it("holds each repository to its own ids", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      published([pluginFile, themeFile], {
+        pins: {
+          ...PINS,
+          "example/example-theme": { id: "7", ownerId: "42" },
+        },
+      }),
+    );
+    assert.deepEqual(problems, [
+      'theme example-theme 1.0.0: the artifact\'s build attestation states sourceRepositoryIdentifier "1001", not "7".',
+    ]);
+  });
+
   it("fails when the attestation does not verify", async () => {
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
@@ -402,10 +452,15 @@ describe("a listing", () => {
     const workflow =
       "https://github.com/example/openbrf-occupancy/.github/workflows/release.yml@refs/tags/v1.0.0";
     assert.deepEqual(
-      expectedClaims({ owner: "example", repo: "openbrf-occupancy", tag: "v1.0.0" }),
+      expectedClaims(
+        { owner: "example", repo: "openbrf-occupancy", tag: "v1.0.0" },
+        { id: "1000", ownerId: "42" },
+      ),
       {
         issuer: "https://token.actions.githubusercontent.com",
         sourceRepositoryURI: "https://github.com/example/openbrf-occupancy",
+        sourceRepositoryIdentifier: "1000",
+        sourceRepositoryOwnerIdentifier: "42",
         sourceRepositoryRef: "refs/tags/v1.0.0",
         buildSignerURI: workflow,
         buildConfigURI: workflow,
@@ -451,6 +506,24 @@ describe("a listing", () => {
         "a source in another repository",
         { sourceRepositoryURI: `${repository}-fork` },
       ],
+      [
+        "the id of another repository, as after a takeover of the name",
+        { sourceRepositoryIdentifier: "999999" },
+      ],
+      [
+        "the id of another owner, as after a takeover of the name",
+        { sourceRepositoryOwnerIdentifier: "999999" },
+      ],
+      [
+        "the repository id as a number",
+        { sourceRepositoryIdentifier: 1000 },
+      ],
+      [
+        "a repository id with a leading zero",
+        { sourceRepositoryIdentifier: "01000" },
+      ],
+      ["no repository id", { sourceRepositoryIdentifier: undefined }],
+      ["no owner id", { sourceRepositoryOwnerIdentifier: undefined }],
       ["a run on main", { sourceRepositoryRef: "refs/heads/main" }],
       ["a self-hosted runner", { runnerEnvironment: "self-hosted" }],
       ["another issuer", { issuer: "https://issuer.example" }],
@@ -466,11 +539,10 @@ describe("a listing", () => {
           deps,
         );
         const [claim, value] = Object.entries(overrides)[0];
-        const expected = expectedClaims({
-          owner: "example",
-          repo: "openbrf-occupancy",
-          tag: "v1.0.0",
-        })[claim];
+        const expected = expectedClaims(
+          { owner: "example", repo: "openbrf-occupancy", tag: "v1.0.0" },
+          PINS["example/openbrf-occupancy"],
+        )[claim];
         assert.deepEqual(problems, [
           `plugin occupancy 1.0.0: the artifact's build attestation states ${claim} ${String(JSON.stringify(value))}, not ${JSON.stringify(expected)}.`,
         ]);
@@ -525,6 +597,17 @@ describe("a listing", () => {
       problems[1],
       /^theme example-theme 1\.0\.0: .*b{40}, which is not on main/,
     );
+  });
+
+  it("fails when the run's configuration was read at a commit main does not have", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      published([pluginFile], {
+        certificates: [{ buildConfigDigest: OFF_MAIN }],
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /names the commit b{40}, which is not on main/);
   });
 
   it("fails when the signing workflow was read at a commit main does not have", async () => {
@@ -873,6 +956,74 @@ describe("an artifact URL", () => {
   ]) {
     it(`is refused with ${why}`, () => {
       assert.equal(typeof releaseLocation(url, version), "string");
+    });
+  }
+});
+
+describe("the repositories a listing may come from", () => {
+  it("are read with their ids", () => {
+    assert.deepEqual(
+      parseRepositoryPins({
+        version: 1,
+        repositories: { "example/repo": { id: "1", ownerId: "22" } },
+      }),
+      { ok: true, pins: { "example/repo": { id: "1", ownerId: "22" } } },
+    );
+  });
+
+  it("may be none", () => {
+    assert.deepEqual(parseRepositoryPins({ version: 1, repositories: {} }), {
+      ok: true,
+      pins: {},
+    });
+  });
+
+  it("is the file in this repository", () => {
+    const parsed = parseRepositoryPins(
+      JSON.parse(readFileSync("repositories.json", "utf8")),
+    );
+    assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
+  for (const [why, input] of [
+    ["not an object", []],
+    ["another version", { version: 2, repositories: {} }],
+    ["no repositories", { version: 1 }],
+    ["repositories as a list", { version: 1, repositories: [] }],
+    [
+      "a name that is not owner/repo",
+      { version: 1, repositories: { repo: { id: "1", ownerId: "2" } } },
+    ],
+    [
+      "a name with a path in it",
+      { version: 1, repositories: { "a/b/c": { id: "1", ownerId: "2" } } },
+    ],
+    [
+      "an id as a number",
+      { version: 1, repositories: { "a/b": { id: 1, ownerId: "2" } } },
+    ],
+    [
+      "an id that is not digits",
+      { version: 1, repositories: { "a/b": { id: "1", ownerId: "x" } } },
+    ],
+    [
+      "an id with a leading zero",
+      { version: 1, repositories: { "a/b": { id: "01", ownerId: "2" } } },
+    ],
+    [
+      "no owner id",
+      { version: 1, repositories: { "a/b": { id: "1" } } },
+    ],
+    [
+      "a key it does not know",
+      {
+        version: 1,
+        repositories: { "a/b": { id: "1", ownerId: "2", name: "b" } },
+      },
+    ],
+  ]) {
+    it(`are refused with ${why}`, () => {
+      assert.equal(parseRepositoryPins(input).ok, false);
     });
   }
 });
