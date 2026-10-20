@@ -647,6 +647,21 @@ describe("a listing", () => {
       assert.deepEqual(await problemsOf(plugin, {}, 1), []);
     });
 
+    // Holds whether or not the pinned core reads `recipients`: one it does not
+    // read drops them from the parsed manifest, and the entry must still show
+    // what the package declares.
+    it("fails when the package declares one and the entry says nothing", async () => {
+      const problems = await problemsOf(recipientPackage([RATES]), {}, 1);
+      assert.equal(
+        problems.filter((problem) =>
+          /the entry's recipients is \[\], the package's is .*rates\.example/.test(
+            problem,
+          ),
+        ).length,
+        1,
+      );
+    });
+
     it(
       "passes when the entry repeats the package's, in any order",
       { skip: !knowsRecipients },

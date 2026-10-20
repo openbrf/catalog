@@ -502,12 +502,15 @@ async function pluginProblems(entry, bytes, built, deps) {
       ],
       // The board consents to the entry's recipients, purpose included,
       // before anything is downloaded. Absent is none on both sides: a
-      // version 1 entry cannot carry them, and a core that does not know
-      // them yet reads them from neither.
+      // version 1 entry cannot carry them. The package's are read from its
+      // package.json when the pinned core's parser drops them, so a package
+      // that declares recipients never passes as having none.
       [
         "recipients",
         recipientSet(entry.recipients ?? []),
-        recipientSet(manifest.recipients ?? []),
+        recipientSet(
+          manifest.recipients ?? packageJson.openbrf?.recipients ?? [],
+        ),
       ],
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
@@ -845,11 +848,22 @@ function actionSet(actions) {
   return actions.map(canonical).sort();
 }
 
-/** Recipients compared as a set, each with its categories in one order. */
+/**
+ * Recipients compared as a set, each with its categories in one order. What a
+ * package.json carries that is not a list of recipients stays as it is, so it
+ * disagrees with the entry and is named.
+ */
 function recipientSet(recipients) {
+  if (!Array.isArray(recipients)) {
+    return [canonical(recipients)];
+  }
   return recipients
     .map((recipient) =>
-      canonical({ ...recipient, personalData: sorted(recipient.personalData) }),
+      canonical(
+        Array.isArray(recipient?.personalData)
+          ? { ...recipient, personalData: sorted(recipient.personalData) }
+          : recipient,
+      ),
     )
     .sort();
 }
