@@ -507,10 +507,8 @@ async function pluginProblems(entry, bytes, built, deps) {
       // that declares recipients never passes as having none.
       [
         "recipients",
-        recipientSet(entry.recipients ?? []),
-        recipientSet(
-          manifest.recipients ?? packageJson.openbrf?.recipients ?? [],
-        ),
+        recipientSet(entry.recipients === undefined ? [] : entry.recipients),
+        recipientSet(packagedRecipients(manifest, packageJson)),
       ],
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
@@ -846,6 +844,16 @@ function sorted(values) {
 /** Actions compared as a set, each with its keys in one order. */
 function actionSet(actions) {
   return actions.map(canonical).sort();
+}
+
+/**
+ * What the package declares as recipients: the parsed manifest's, else the
+ * package.json's own when the pinned core's parser drops them. Only absent is
+ * none; an explicit null stays, so it disagrees with the entry.
+ */
+function packagedRecipients(manifest, packageJson) {
+  const declared = manifest.recipients ?? packageJson.openbrf?.recipients;
+  return declared === undefined ? [] : declared;
 }
 
 /**

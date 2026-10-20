@@ -662,6 +662,16 @@ describe("a listing", () => {
       );
     });
 
+    // An explicit null is a malformed declaration, not an absent one.
+    it("fails when the package declares recipients as null", async () => {
+      const problems = await problemsOf(recipientPackage(null), {}, 1);
+      assert.notDeepEqual(problems, []);
+      assert.ok(
+        problems.some((problem) => /recipients/.test(problem)),
+        problems.join("\n"),
+      );
+    });
+
     it(
       "passes when the entry repeats the package's, in any order",
       { skip: !knowsRecipients },
