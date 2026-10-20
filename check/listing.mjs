@@ -500,6 +500,16 @@ async function pluginProblems(entry, bytes, built, deps) {
         entry.oauthProtectedResource ?? null,
         manifest.oauthProtectedResource ?? null,
       ],
+      // The board consents to the entry's recipients, purpose included,
+      // before anything is downloaded. Absent is none on both sides: a
+      // version 1 entry cannot carry them. The package's are read from its
+      // package.json when the pinned core's parser drops them, so a package
+      // that declares recipients never passes as having none.
+      [
+        "recipients",
+        recipientSet(entry.recipients === undefined ? [] : entry.recipients),
+        recipientSet(packagedRecipients(manifest, packageJson)),
+      ],
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
       ["ai", entry.ai ?? false, manifest.ai ?? false],
@@ -834,6 +844,36 @@ function sorted(values) {
 /** Actions compared as a set, each with its keys in one order. */
 function actionSet(actions) {
   return actions.map(canonical).sort();
+}
+
+/**
+ * What the package declares as recipients: the parsed manifest's, else the
+ * package.json's own when the pinned core's parser drops them. Only absent is
+ * none; an explicit null stays, so it disagrees with the entry.
+ */
+function packagedRecipients(manifest, packageJson) {
+  const declared = manifest.recipients ?? packageJson.openbrf?.recipients;
+  return declared === undefined ? [] : declared;
+}
+
+/**
+ * Recipients compared as a set, each with its categories in one order. What a
+ * package.json carries that is not a list of recipients stays as it is, so it
+ * disagrees with the entry and is named.
+ */
+function recipientSet(recipients) {
+  if (!Array.isArray(recipients)) {
+    return [canonical(recipients)];
+  }
+  return recipients
+    .map((recipient) =>
+      canonical(
+        Array.isArray(recipient?.personalData)
+          ? { ...recipient, personalData: sorted(recipient.personalData) }
+          : recipient,
+      ),
+    )
+    .sort();
 }
 
 /** JSON with object keys sorted, so equal values print equally. */

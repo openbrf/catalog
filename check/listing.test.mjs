@@ -606,6 +606,154 @@ describe("a listing", () => {
     );
   });
 
+  describe("a plugin's recipients", () => {
+    const RATES = {
+      id: "rates",
+      origin: "https://rates.example.com",
+      purpose: { sv: "Dagens kurser", en: "The day's rates" },
+      personalData: [],
+    };
+    const MAIL = {
+      id: "mail",
+      origin: "https://mail.example.com",
+      purpose: { sv: "Skicka utskick", en: "Send mailings" },
+      personalData: ["name", "apartment"],
+    };
+
+    // A core older than `recipients` reads them from neither side and refuses
+    // an index of version 2, so the comparison cannot be shown until CORE_REF
+    // moves past it.
+    const knowsRecipients =
+      sdk.parsePluginPackage({
+        ...PLUGIN_PACKAGE,
+        openbrf: { ...PLUGIN_PACKAGE.openbrf, recipients: [RATES] },
+      }).value?.openbrf.recipients?.length === 1;
+
+    const recipientPackage = (recipients) =>
+      pluginArchive({
+        ...PLUGIN_PACKAGE,
+        openbrf: { ...PLUGIN_PACKAGE.openbrf, recipients },
+      });
+
+    async function problemsOf(bytes, overrides, version = 2) {
+      const entry = pluginEntry(bytes, overrides);
+      return catalogProblems(
+        { version, entries: [entry] },
+        published([{ url: entry.artifact.url, bytes }]),
+      );
+    }
+
+    it("passes when the entry and the package both declare none", async () => {
+      assert.deepEqual(await problemsOf(plugin, {}, 1), []);
+    });
+
+    // Holds whether or not the pinned core reads `recipients`: one it does not
+    // read drops them from the parsed manifest, and the entry must still show
+    // what the package declares.
+    it("fails when the package declares one and the entry says nothing", async () => {
+      const problems = await problemsOf(recipientPackage([RATES]), {}, 1);
+      assert.equal(
+        problems.filter((problem) =>
+          /the entry's recipients is \[\], the package's is .*rates\.example/.test(
+            problem,
+          ),
+        ).length,
+        1,
+      );
+    });
+
+    // An explicit null is a malformed declaration, not an absent one.
+    it("fails when the package declares recipients as null", async () => {
+      const problems = await problemsOf(recipientPackage(null), {}, 1);
+      assert.notDeepEqual(problems, []);
+      assert.ok(
+        problems.some((problem) => /recipients/.test(problem)),
+        problems.join("\n"),
+      );
+    });
+
+    it(
+      "passes when the entry repeats the package's, in any order",
+      { skip: !knowsRecipients },
+      async () => {
+        const bytes = recipientPackage([RATES, MAIL]);
+        const reordered = { ...MAIL, personalData: ["apartment", "name"] };
+        assert.deepEqual(
+          await problemsOf(bytes, { recipients: [reordered, RATES] }),
+          [],
+        );
+      },
+    );
+
+    it(
+      "fails when the package declares one the entry leaves out",
+      { skip: !knowsRecipients },
+      async () => {
+        const bytes = recipientPackage([RATES, MAIL]);
+        const problems = await problemsOf(bytes, { recipients: [RATES] });
+        assert.equal(problems.length, 1);
+        assert.match(problems[0], /the entry's recipients is .*mail\.example/);
+      },
+    );
+
+    it(
+      "fails when the entry declares one the package does not",
+      { skip: !knowsRecipients },
+      async () => {
+        const problems = await problemsOf(plugin, { recipients: [RATES] });
+        assert.equal(problems.length, 1);
+        assert.match(
+          problems[0],
+          /the entry's recipients is .*rates\.example.*, the package's is \[\]\.$/,
+        );
+      },
+    );
+
+    for (const [field, value] of [
+      ["origin", "https://api.example.com"],
+      ["purpose", { sv: "Kurser", en: "Rates" }],
+      ["personalData", ["name"]],
+    ]) {
+      it(
+        `fails when the entry states another ${field} than the package`,
+        { skip: !knowsRecipients },
+        async () => {
+          const bytes = recipientPackage([RATES]);
+          const problems = await problemsOf(bytes, {
+            recipients: [{ ...RATES, [field]: value }],
+          });
+          assert.equal(problems.length, 1);
+          assert.match(problems[0], /the entry's recipients is /);
+        },
+      );
+    }
+
+    it(
+      "fails when an index of version 1 lists a plugin that declares them",
+      { skip: !knowsRecipients },
+      async () => {
+        const bytes = recipientPackage([RATES]);
+        const problems = await problemsOf(bytes, {}, 1);
+        assert.equal(problems.length, 1);
+        assert.match(problems[0], /the package's is .*rates\.example/);
+      },
+    );
+
+    it(
+      "fails when an index of version 1 carries them",
+      { skip: !knowsRecipients },
+      async () => {
+        const bytes = recipientPackage([RATES]);
+        const problems = await problemsOf(bytes, { recipients: [RATES] }, 1);
+        assert.equal(problems.length, 1);
+        assert.match(
+          problems[0],
+          /recipients is not in version 1 of the index/,
+        );
+      },
+    );
+  });
+
   it("fails when the plugin fails the package check", async () => {
     const withDependency = pluginArchive({
       ...PLUGIN_PACKAGE,
