@@ -13,24 +13,32 @@ read with `parseCatalogIndex` from `@openbrf/plugin-sdk`.
 
 A package is listed when:
 
-- its artifact is an asset of an immutable GitHub release of the repository its
-  source lives in, at
+- its artifact is an asset of an immutable GitHub release of the listing's own
+  public repository, at
   `https://github.com/<owner>/<repo>/releases/download/v<version>/<file>.tgz`,
   the tag being `v` followed by the entry's version, and the release not a
-  draft or a pre-release;
+  draft or a pre-release. That repository is the one its source lives in, or a
+  release-only repository that builds it from source kept elsewhere (see
+  below);
 - the tarball carries a build attestation from that repository's release
   workflow, `.github/workflows/release.yml`: made on a GitHub-hosted runner, by
-  a run of that repository on the release's tag `v<version>`;
+  a run of that repository on the release's tag `v<version>`. An attestation
+  made in any other repository, the source repository of a release-only listing
+  included, is refused;
 - the commits that attestation names, the source it was built from and the
   commit its workflow was read at, are on the repository's default branch. A
   tag push runs the workflow as the tagged commit has it, so a release
   workflow's own check that the tag is on `main` can be edited away on a branch
   that is then tagged; the catalog asks GitHub instead;
+- a package from a release-only repository carries a `source.json` at its root
+  naming its source, a copy of the release repository's own, as below;
 - the entry states the tarball's `sha512` and `bytes`, and both match the
   download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
-  id, API version, permissions, personal data categories, actions and protected
-  resource; for a theme the name, version, contract and parent, the parent
+  id, API version, permissions, personal data categories, actions, protected
+  resource and recipients (each one's id, origin, purpose and categories, the
+  board reading the entry's before anything is downloaded); for a theme the
+  name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
   the theme is too;
 - the tarball is gzipped and holds files and directories only (no links or
@@ -41,13 +49,91 @@ A package is listed when:
   not listed;
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
-  `@openbrf/theme-tools`.
+  `@openbrf/theme-tools`;
+- a plugin connects to nothing outside the instance that it does not declare
+  in its `recipients`
+  ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
+  and it sends personal data only through `host.recipients.fetch`, never by a
+  raw `fetch`, `http` or `https` request to a declared origin. The host
+  validates the request's disclosure against the recipient's declared
+  categories and records it only on that route. A declaration is not a fence:
+  a plugin runs with the instance's privileges, and nothing in the host stops a
+  connection it did not declare or a request that skips the route. The check
+  cannot see either, so the maintainer reading the server bundle holds the
+  plugin to both (see below).
 
 A listed repository should also hold its `v*` tags to a tag ruleset that lets
 only its maintainers create, move or delete one. The check does not read a
 repository's settings, and refuses a release built off the default branch
 whatever they are; the ruleset stops anyone who can merely push from making
 such a release in the first place.
+
+### A release-only repository
+
+A package whose source is not public is listed from a public repository that
+holds its release workflow and builds the package from the private source
+([ADR 0044](https://github.com/openbrf/openbrf/blob/main/docs/adr/0044-a-listing-released-from-a-repository-without-its-source.md)).
+Its tarball is still a public download, and neither this check nor an instance
+is given a credential for it.
+
+The release repository pins the source it builds in a `source.json` at its own
+root, and the release workflow copies that file unchanged into the package's
+root, beside its `package.json` or `theme.json`:
+
+```json
+{
+  "repository": "https://github.com/<owner>/<source repository>",
+  "commit": "<full commit id>"
+}
+```
+
+The check reads the release repository's `source.json` at the commit the
+attestation names as the source, and refuses the package unless its own
+`source.json` has the same bytes, or has none when the release repository pins
+none. It also refuses a record:
+
+- that is not a JSON object with exactly those two fields, each named once;
+- whose `repository` is not exactly `https://github.com/<owner>/<repository>`,
+  without `.git`, a trailing slash or a further path. A source on another host
+  is refused, because the check can ask only GitHub whether a repository is
+  public;
+- whose `repository` is the release's own repository;
+- whose `repository` GitHub reports public. A package whose source is public is
+  released from that repository;
+- whose `commit` is not 40 or 64 lowercase hexadecimal characters.
+
+It cannot read a private source, so it does not check that the commit exists.
+The record is in the tarball rather than in the release notes because an
+immutable release's notes can still be edited. The attestation fixes the
+record but does not prove it: the release workflow writes the package, so the
+record is the author's statement of the source, pinned in the public history of
+the repository that signed it.
+
+The check reads a package without `source.json`, from a release repository that
+pins none, as built from the commit its attestation names, and cannot tell a
+release-only repository that left both out. The maintainer reviewing the
+listing can: a release-only listing without the record is not merged. The
+maintainer also checks that the release repository:
+
+- moves its pin by a reviewed pull request for each release and pushes the tag
+  on the merge, with the tag ruleset above;
+- reads the pin at the tagged commit and checks out exactly that commit of the
+  source, with `persist-credentials: false`;
+- keeps the credential that reads the source as an **environment secret**, of
+  an environment whose deployment rule allows only `v*` tags. A repository
+  secret is open to every workflow and job in the repository, whatever
+  environment a job names;
+- uses a credential that reads the source repository and nothing else: a
+  read-only deploy key, a GitHub App installation token minted in the run for
+  that repository alone with `contents: read`, or a fine-grained personal
+  access token limited to that repository with `contents: read`. Never a
+  classic personal access token, which reaches every repository its owner can;
+- builds in a job that holds the credential and has no `id-token` or
+  `attestations` permission, and attests and publishes in a separate job that
+  has those permissions and not the credential.
+
+The credential is never in the package or the release, and neither the catalog
+nor an instance needs one.
 
 ## How a listing is reviewed
 
@@ -60,14 +146,21 @@ such a release in the first place.
    schema, looks up the release, downloads the artifact, recomputes its digest
    and size, verifies its attestation and asks GitHub whether the attested
    commit is on the default branch, unpacks it and compares its manifest with
-   the entry, then runs the package check or the install lint. The pull request
-   cannot merge until it passes. The schema and checks come from the
+   the entry, checks the package's `source.json` against the release
+   repository's pin, then runs the package check or the install lint. The pull
+   request cannot merge until it passes. The schema and checks come from the
    `openbrf/openbrf` commit pinned as `CORE_REF` in the workflow.
 3. **A person.** The check says whether a package installs, not whether it is
    safe: a plugin runs in the instance's process with its privileges. A
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
-   will be asked to consent to, and approves the pull request. Every file in
+   will be asked to consent to, checks that every place the bundle connects to
+   outside the instance is one of its `recipients` and receives no more than
+   that recipient declares, and that every request carrying personal data goes
+   through `host.recipients.fetch` and no other way (a raw `fetch`, `http` or
+   `https` call to a declared origin skips the host's disclosure validation and
+   audit record, so it is refused even though the origin is declared), and
+   approves the pull request. Every file in
    this repository is owned by the maintainers, the check included, so a change
    to the check is reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets
