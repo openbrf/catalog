@@ -9,10 +9,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
  * those rules are enforced for the curated catalog.
  *
  * Nothing here reaches the network or the core by itself. The caller hands in
- * the core's own packages and the four things that do reach out - reading a
+ * the core's own packages and the things that do reach out - reading a
  * release, downloading an artifact, verifying an attestation, asking whether a
- * commit is on the default branch - so the rules are tested offline against
- * fixtures and run for real in CI.
+ * commit is on the default branch, whether a repository is public and what a
+ * release repository pins - so the rules are tested offline against fixtures
+ * and run for real in CI.
  */
 
 /**
@@ -36,10 +37,18 @@ export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 /** The OIDC issuer GitHub Actions on github.com signs with. */
 const ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
 
+/**
+ * The file at a package's root in which a package built in a release-only
+ * repository names the source it was built from.
+ */
+export const SOURCE_FILE = "source.json";
+
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
 /** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** The most unknown fields of a source record one problem names. */
+const MAX_NAMED_FIELDS = 5;
 
 /**
  * @typedef {object} ListingDeps
@@ -50,10 +59,17 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} fetchArtifact
  * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string, workflow: string) => Promise<Attestation>} verifyAttestation
  *   Whether the bytes carry a build attestation signed by the workflow at that
- *   path in the repository, in a run on the tag.
+ *   path in the repository, in a run on the tag. Always asked of the
+ *   repository the release is in, never of the source repository a
+ *   release-only listing names.
  * @property {(owner: string, repo: string, commit: string) => Promise<DefaultBranch>} defaultBranchHas
  *   Whether a commit is the head of the repository's default branch or an
  *   ancestor of it.
+ * @property {(owner: string, repo: string) => Promise<boolean>} repositoryIsPublic
+ *   Whether GitHub shows the repository to anyone. False for a private
+ *   repository and for one that does not exist, which it does not tell apart.
+ * @property {(owner: string, repo: string, commit: string) => Promise<Uint8Array | null>} sourcePinAt
+ *   The repository's own `source.json` at a commit, or null when it has none.
  * @property {Record<string, RepositoryPin>} repositoryPins
  *   The GitHub ids of each repository a listing may come from, by
  *   `<owner>/<repo>` as the artifact URL writes it: `repositories.json`.
@@ -149,7 +165,7 @@ export function parseRepositoryPins(input) {
 export async function catalogProblems(input, deps) {
   const parsed = deps.sdk.parseCatalogIndex(input);
   if (!parsed.ok) {
-    return parsed.issues.map((issue) => `catalog.json: ${issue}`);
+    return parsed.issues.map((issue) => oneLine(`catalog.json: ${issue}`));
   }
 
   const { entries } = parsed.value;
@@ -192,7 +208,9 @@ export async function catalogProblems(input, deps) {
 
     // Catalog policy: a deprecated entry is kept for the instances that have
     // it and offered to no new one, so a theme still offered extends none.
-    const deprecated = ancestors.find((ancestor) => ancestor.deprecated === true);
+    const deprecated = ancestors.find(
+      (ancestor) => ancestor.deprecated === true,
+    );
     if (deprecated !== undefined && entry.deprecated !== true) {
       problems.push(
         `${label}: extends ${through(ancestors, deprecated)}, which is deprecated in this index, so a new install cannot install ${deprecated.id}.`,
@@ -230,7 +248,16 @@ export async function catalogProblems(input, deps) {
     }
   }
 
-  return problems;
+  return problems.map(oneLine);
+}
+
+/**
+ * A problem as one line. A problem quotes text from a listing's package, and a
+ * line break in it would start a line of its own in the CI log, which the
+ * runner reads for workflow commands.
+ */
+function oneLine(problem) {
+  return problem.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 
 /**
@@ -360,9 +387,15 @@ async function entryProblems(entry, deps, themes) {
     return provenance;
   }
 
+  const built = {
+    location,
+    sources: attestation.certificates.map(
+      (certificate) => certificate.sourceRepositoryDigest,
+    ),
+  };
   return entry.type === "plugin"
-    ? pluginProblems(entry, bytes, deps)
-    : themeProblems(entry, bytes, deps, themes);
+    ? pluginProblems(entry, bytes, built, deps)
+    : themeProblems(entry, bytes, built, deps, themes);
 }
 
 /**
@@ -551,7 +584,7 @@ function releaseProblems(release, location, bytes) {
  * A plugin package: it agrees with its entry and passes the SDK's package
  * check, the same one a plugin's own CI runs.
  */
-function pluginProblems(entry, bytes, deps) {
+async function pluginProblems(entry, bytes, built, deps) {
   let files;
   try {
     files = deps.themeTools.readThemeArchive(bytes);
@@ -583,6 +616,7 @@ function pluginProblems(entry, bytes, deps) {
   const server = files.get(serverPath);
 
   const problems = [
+    ...(await sourceProblems(files, built, deps)),
     ...deps.sdk.pluginPackageProblems({
       packageJson,
       files: [...files.keys()],
@@ -611,6 +645,19 @@ function pluginProblems(entry, bytes, deps) {
         entry.oauthProtectedResource ?? null,
         manifest.oauthProtectedResource ?? null,
       ],
+      // The board consents to the entry's recipients, purpose included,
+      // before anything is downloaded. Absent is none on both sides: a
+      // version 1 entry cannot carry them. The package's are read from its
+      // package.json when the pinned core's parser drops them, so a package
+      // that declares recipients never passes as having none.
+      [
+        "recipients",
+        recipientSet(entry.recipients === undefined ? [] : entry.recipients),
+        recipientSet(packagedRecipients(manifest, packageJson)),
+      ],
+      // Absent is false on both sides, and a core that does not know `ai` yet
+      // reads neither, so this holds before and after the core moves.
+      ["ai", entry.ai ?? false, manifest.ai ?? false],
     ];
     for (const [field, listed, packaged] of disagreements) {
       if (canonical(listed) !== canonical(packaged)) {
@@ -628,7 +675,7 @@ function pluginProblems(entry, bytes, deps) {
  * A theme package: it agrees with its entry. The lint runs once every theme
  * in the index has been read.
  */
-function themeProblems(entry, bytes, deps, themes) {
+async function themeProblems(entry, bytes, built, deps, themes) {
   const read = deps.themeTools.readThemePackage(bytes);
   if (!read.ok) {
     return read.issues.map(
@@ -637,7 +684,7 @@ function themeProblems(entry, bytes, deps, themes) {
   }
 
   const { manifest } = read.package;
-  const problems = [];
+  const problems = await sourceProblems(read.package.files, built, deps);
   const disagreements = [
     ["name", entry.id, manifest.name],
     ["version", entry.version, manifest.version],
@@ -656,6 +703,259 @@ function themeProblems(entry, bytes, deps, themes) {
     themes.set(entry.id, read.package);
   }
   return problems;
+}
+
+/**
+ * Why the package's record of the source it was built from is not one a
+ * listing accepts, or nothing.
+ *
+ * A package released from a release-only repository names the repository its
+ * source is in and the commit it was built from, inside the attested bytes
+ * rather than in the release notes, which stay editable on an immutable
+ * release. The release workflow writes those bytes, so the attestation fixes
+ * the record without proving it: it is the author's statement of the source.
+ * Two rules keep that statement from borrowing anyone else's. It names no
+ * repository the public can read, because a package whose source is public is
+ * released from that repository. And it is a copy of the release repository's
+ * own `source.json` at the commit the attestation names, so it is a pin in the
+ * public history of the repository that signed it. The source itself may be
+ * private, so the check cannot read whether the commit exists. A package
+ * without the record, from a repository that pins none, was built from the
+ * commit its attestation names.
+ */
+async function sourceProblems(files, { location, sources }, deps) {
+  const file = files.get(SOURCE_FILE);
+  const problems =
+    file === undefined ? [] : await recordProblems(file, location, deps);
+
+  const commits = Array.isArray(sources) ? [...new Set(sources)] : [];
+  if (commits.length === 0) {
+    problems.push(
+      `the artifact's build attestation names no source commit, at which the ${SOURCE_FILE} of ${location.owner}/${location.repo} would be read.`,
+    );
+  }
+  for (const commit of commits) {
+    problems.push(...(await pinProblems(file, location, commit, deps)));
+  }
+  return problems;
+}
+
+/** Why the record itself is not one a listing accepts, or nothing. */
+async function recordProblems(file, location, deps) {
+  let text;
+  let record;
+  try {
+    text = new TextDecoder("utf8", { fatal: true }).decode(file);
+    record = JSON.parse(text);
+  } catch {
+    return [`the package's ${SOURCE_FILE} is not readable JSON.`];
+  }
+  if (record === null || typeof record !== "object" || Array.isArray(record)) {
+    return [
+      `the package's ${SOURCE_FILE} is not an object naming the source's \`repository\` and \`commit\`.`,
+    ];
+  }
+  // JSON.parse keeps the last of a repeated field, where another reader of
+  // the same bytes may keep the first.
+  const repeated = repeatedKey(text);
+  if (repeated !== undefined) {
+    return [
+      `the package's ${SOURCE_FILE} names the field ${JSON.stringify(repeated)} more than once.`,
+    ];
+  }
+
+  const problems = [];
+  const unknown = Object.keys(record).filter(
+    (field) => field !== "repository" && field !== "commit",
+  );
+  if (unknown.length > 0) {
+    // Quoted: a field name is the package's text, and a line break in it
+    // would start a line of its own in the CI log.
+    const named = unknown
+      .slice(0, MAX_NAMED_FIELDS)
+      .map((field) => JSON.stringify(field))
+      .join(", ");
+    const more =
+      unknown.length > MAX_NAMED_FIELDS
+        ? ` and ${String(unknown.length - MAX_NAMED_FIELDS)} more`
+        : "";
+    problems.push(
+      `the package's ${SOURCE_FILE} has fields a listing does not define: ${named}${more}.`,
+    );
+  }
+
+  const repository = sourceRepository(record.repository, location);
+  if (typeof repository === "string") {
+    problems.push(repository);
+  } else {
+    const named = `${repository.owner}/${repository.repo}`;
+    let isPublic;
+    try {
+      isPublic = await deps.repositoryIsPublic(
+        repository.owner,
+        repository.repo,
+      );
+    } catch (error) {
+      problems.push(
+        `whether ${named}, which the package's ${SOURCE_FILE} names, is public could not be read: ${error.message}`,
+      );
+    }
+    if (isPublic === true) {
+      problems.push(
+        `the package's ${SOURCE_FILE} names ${named}, which is public; a package whose source is public is released from its source repository, without ${SOURCE_FILE}.`,
+      );
+    }
+  }
+
+  if (record.commit === undefined) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names no \`commit\` it was built from.`,
+    );
+  } else if (
+    typeof record.commit !== "string" ||
+    !COMMIT_PATTERN.test(record.commit)
+  ) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names the commit ${JSON.stringify(record.commit)}, which is not a full commit id of 40 or 64 lowercase hexadecimal characters.`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * The GitHub repository a source record names, or why it is not one.
+ *
+ * Exactly `https://github.com/<owner>/<repository>`, read as written as the
+ * artifact URL is. Another host is refused because the check cannot ask it
+ * whether the repository is public. The release's own repository is refused: a
+ * package built there has its commit named by its attestation, and a record
+ * repeating it could only disagree.
+ */
+function sourceRepository(repository, location) {
+  if (repository === undefined) {
+    return `the package's ${SOURCE_FILE} names no \`repository\` its source is in.`;
+  }
+  const refuse = `the package's ${SOURCE_FILE} names the repository ${JSON.stringify(repository)}, which is not https://github.com/<owner>/<repository>.`;
+  if (typeof repository !== "string") {
+    return refuse;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(repository);
+  } catch {
+    return refuse;
+  }
+  if (
+    parsed.href !== repository ||
+    parsed.protocol !== "https:" ||
+    parsed.host !== "github.com" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    return refuse;
+  }
+  const segments = parsed.pathname.split("/");
+  if (segments.length !== 3) {
+    return refuse;
+  }
+  const [, owner, repo] = segments;
+  if (
+    ![owner, repo].every((segment) => SEGMENT.test(segment)) ||
+    repo.endsWith(".git")
+  ) {
+    return refuse;
+  }
+
+  // GitHub reads owner and repository names case-insensitively.
+  if (
+    `${owner}/${repo}`.toLowerCase() ===
+    `${location.owner}/${location.repo}`.toLowerCase()
+  ) {
+    return `the package's ${SOURCE_FILE} names ${location.owner}/${location.repo}, the repository it is released from; a package built there has no ${SOURCE_FILE}, because its attestation names the commit.`;
+  }
+  return { owner, repo };
+}
+
+/**
+ * Why the package's record, or its absence, is not the pin the release
+ * repository has at an attested source commit, or nothing.
+ *
+ * Compared as bytes: the release workflow copies the pin into the package
+ * unchanged, so every reader of either file reads the same record.
+ */
+async function pinProblems(file, location, commit, deps) {
+  const where = `${location.owner}/${location.repo}`;
+  if (typeof commit !== "string" || !COMMIT_PATTERN.test(commit)) {
+    return [
+      `the artifact's build attestation names the source ${String(JSON.stringify(commit))}, which is not a commit id.`,
+    ];
+  }
+
+  let pin;
+  try {
+    pin = await deps.sourcePinAt(location.owner, location.repo, commit);
+  } catch (error) {
+    return [
+      `the ${SOURCE_FILE} of ${where} at ${commit} could not be read: ${error.message}`,
+    ];
+  }
+  if (pin === null) {
+    return file === undefined
+      ? []
+      : [
+          `the package has a ${SOURCE_FILE}, and ${where} has none at ${commit}, the commit its attestation names; a release-only repository pins the source it builds in a ${SOURCE_FILE} of its own, and the package carries a copy.`,
+        ];
+  }
+  if (file === undefined) {
+    return [
+      `${where} pins a source in its ${SOURCE_FILE} at ${commit}, the commit its attestation names, and the package carries no copy of it.`,
+    ];
+  }
+  if (!Buffer.from(file).equals(Buffer.from(pin))) {
+    return [
+      `the package's ${SOURCE_FILE} is not a copy of the one ${where} has at ${commit}, the commit its attestation names; the release workflow copies the pin into the package unchanged.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * The first field the top-level object of valid JSON text names twice, or
+ * undefined. Strings are skipped whole, so braces and colons inside them are
+ * not read as structure.
+ */
+function repeatedKey(text) {
+  const keys = new Set();
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      let end = index + 1;
+      while (text[end] !== '"') {
+        end += text[end] === "\\" ? 2 : 1;
+      }
+      let next = end + 1;
+      while (" \t\n\r".includes(text[next])) {
+        next += 1;
+      }
+      if (depth === 1 && text[next] === ":") {
+        const key = JSON.parse(text.slice(index, end + 1));
+        if (keys.has(key)) {
+          return key;
+        }
+        keys.add(key);
+      }
+      index = end;
+    } else if (char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth -= 1;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -689,6 +989,36 @@ function sorted(values) {
 /** Actions compared as a set, each with its keys in one order. */
 function actionSet(actions) {
   return actions.map(canonical).sort();
+}
+
+/**
+ * What the package declares as recipients: the parsed manifest's, else the
+ * package.json's own when the pinned core's parser drops them. Only absent is
+ * none; an explicit null stays, so it disagrees with the entry.
+ */
+function packagedRecipients(manifest, packageJson) {
+  const declared = manifest.recipients ?? packageJson.openbrf?.recipients;
+  return declared === undefined ? [] : declared;
+}
+
+/**
+ * Recipients compared as a set, each with its categories in one order. What a
+ * package.json carries that is not a list of recipients stays as it is, so it
+ * disagrees with the entry and is named.
+ */
+function recipientSet(recipients) {
+  if (!Array.isArray(recipients)) {
+    return [canonical(recipients)];
+  }
+  return recipients
+    .map((recipient) =>
+      canonical(
+        Array.isArray(recipient?.personalData)
+          ? { ...recipient, personalData: sorted(recipient.personalData) }
+          : recipient,
+      ),
+    )
+    .sort();
 }
 
 /** JSON with object keys sorted, so equal values print equally. */
