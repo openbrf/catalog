@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { defaultBranchChecker } from "./branch.mjs";
 import { sdk, themeTools } from "./core.mjs";
 import { SOURCE_FILE, catalogProblems } from "./listing.mjs";
 
@@ -177,45 +178,7 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
   };
 }
 
-/** The default branch of each repository asked about, read once. */
-const defaultBranches = new Map();
-
-/**
- * Whether the commit is on the repository's default branch, by GitHub's
- * comparison of the branch with it: `identical` or `behind` when the branch
- * contains it. A commit GitHub does not know is not on it.
- */
-async function defaultBranchHas(owner, repo, commit) {
-  const repository = `${owner}/${repo}`;
-  let branch = defaultBranches.get(repository);
-  if (branch === undefined) {
-    const response = await githubApi(`/repos/${repository}`);
-    if (!response.ok) {
-      throw new Error(
-        `GitHub answered ${String(response.status)} for the repository ${repository}.`,
-      );
-    }
-    branch = (await response.json()).default_branch;
-    if (typeof branch !== "string" || branch === "") {
-      throw new Error(`GitHub names no default branch for ${repository}.`);
-    }
-    defaultBranches.set(repository, branch);
-  }
-
-  const response = await githubApi(
-    `/repos/${repository}/compare/${encodeURIComponent(branch)}...${commit}?per_page=1`,
-  );
-  if (response.status === 404) {
-    return { branch, has: false };
-  }
-  if (!response.ok) {
-    throw new Error(
-      `GitHub answered ${String(response.status)} comparing ${branch} with ${commit} in ${repository}.`,
-    );
-  }
-  const { status } = await response.json();
-  return { branch, has: status === "identical" || status === "behind" };
-}
+const defaultBranchHas = defaultBranchChecker(githubApi);
 
 /**
  * Whether GitHub reports the repository public. Asked with the token, which
