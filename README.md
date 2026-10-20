@@ -46,19 +46,23 @@ A package is listed when:
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.
 
-The check does not read a listed repository's settings. It refuses a release
-built off the default branch whatever they are, but "on the default branch"
-means merged, not reviewed. A listed repository should therefore also have:
+The check does not read a listed repository's settings. It proves that the
+commit a release was built from is an ancestor of the default branch, so that a
+release is not built off a branch. That means the commit was merged, not that
+anyone reviewed it. A listed repository should have:
 
 - a tag ruleset on `refs/tags/v*` restricting creation, update and deletion,
   which only the Admin role bypasses, so that anyone who can merely push
-  cannot make a release at all;
-- a ruleset on its default branch that requires a pull request with at least
-  one approving review, and approval of the most recent push by someone other
-  than the person who pushed it, so that a change to the release workflow
-  reaches the default branch only after a second person has read it. Requiring
-  a code owner's review, with `.github/workflows/` in `CODEOWNERS`, narrows
-  that reader to the people trusted with releases.
+  cannot make a release at all. A maintainer confirms this one when reviewing a
+  listing.
+
+A listed repository is also recommended, not required, to have a ruleset on its
+default branch that requires a pull request with at least one approving review,
+and approval of the most recent push by someone other than the person who
+pushed it, so that a change to the release workflow reaches the default branch
+only after a second person has read it. Requiring a code owner's review, with
+`.github/workflows/` in `CODEOWNERS`, narrows that reader to the people trusted
+with releases. Neither the check nor the reviewer holds a listing to this rule.
 
 ## How a listing is reviewed
 
@@ -79,8 +83,8 @@ means merged, not reviewed. A listed repository should therefore also have:
    safe: a plugin runs in the instance's process with its privileges. A
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
-   will be asked to consent to, confirms that the listed repository has the two
-   rulesets above, and approves the pull request. Every file in this repository
+   will be asked to consent to, confirms that the listed repository has the tag
+   ruleset above, and approves the pull request. Every file in this repository
    is owned by the maintainers, the check included, so a change to the check is
    reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets
