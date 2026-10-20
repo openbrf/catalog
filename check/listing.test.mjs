@@ -537,10 +537,7 @@ describe("a listing", () => {
         "the id of another owner, as after a takeover of the name",
         { sourceRepositoryOwnerIdentifier: "999999" },
       ],
-      [
-        "the repository id as a number",
-        { sourceRepositoryIdentifier: 1000 },
-      ],
+      ["the repository id as a number", { sourceRepositoryIdentifier: 1000 }],
       [
         "a repository id with a leading zero",
         { sourceRepositoryIdentifier: "01000" },
@@ -1737,10 +1734,7 @@ describe("the repositories a listing may come from", () => {
       "an id with a leading zero",
       { version: 1, repositories: { "a/b": { id: "01", ownerId: "2" } } },
     ],
-    [
-      "no owner id",
-      { version: 1, repositories: { "a/b": { id: "1" } } },
-    ],
+    ["no owner id", { version: 1, repositories: { "a/b": { id: "1" } } }],
     [
       "a key it does not know",
       {

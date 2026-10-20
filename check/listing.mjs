@@ -101,7 +101,8 @@ const MAX_NAMED_FIELDS = 5;
 const GITHUB_ID = /^[1-9][0-9]*$/;
 
 /** A GitHub id as the certificate states it: a string of decimal digits. */
-const isGithubId = (value) => typeof value === "string" && GITHUB_ID.test(value);
+const isGithubId = (value) =>
+  typeof value === "string" && GITHUB_ID.test(value);
 
 /**
  * The repositories a listing may come from, read from `repositories.json`:
@@ -117,7 +118,11 @@ const isGithubId = (value) => typeof value === "string" && GITHUB_ID.test(value)
 export function parseRepositoryPins(input) {
   const isObject = (value) =>
     value !== null && typeof value === "object" && !Array.isArray(value);
-  if (!isObject(input) || input.version !== 1 || !isObject(input.repositories)) {
+  if (
+    !isObject(input) ||
+    input.version !== 1 ||
+    !isObject(input.repositories)
+  ) {
     return {
       ok: false,
       issues: ['expected {"version": 1, "repositories": {...}}.'],
