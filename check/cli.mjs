@@ -1,11 +1,11 @@
 /**
  * Checks catalog.json against every rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
- * attestation, whether the commit that attestation names is on the
+ * attestation, whether the commits that attestation names are on the
  * repository's default branch, and for a release-only listing whether the
  * source it names is public and what its release repository pins.
  *
- *   node check/cli.mjs [catalog.json]
+ *   node check/cli.mjs [catalog.json [repositories.json]]
  *
  * Reads the index schema and the package checks from a checkout of
  * openbrf/openbrf with its plugin-sdk and theme-tools built, at `.core` or
@@ -19,11 +19,16 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { sdk, themeTools } from "./core.mjs";
-import { SOURCE_FILE, catalogProblems } from "./listing.mjs";
+import {
+  SOURCE_FILE,
+  catalogProblems,
+  parseRepositoryPins,
+} from "./listing.mjs";
 
 const run = promisify(execFile);
 
 const catalogPath = resolve(process.argv[2] ?? "catalog.json");
+const pinsPath = resolve(process.argv[3] ?? "repositories.json");
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
 
 /** How long `gh attestation verify` may run. */
@@ -149,7 +154,8 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
   }
 
   // One result per attestation that verified, each with the certificate's
-  // claims as GitHub's OIDC token stated them.
+  // claims as GitHub's OIDC token stated them. The listing checks compare
+  // those claims themselves rather than trust how this gh matches its flags.
   let results;
   try {
     results = JSON.parse(stdout);
@@ -162,17 +168,10 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
       reason: "gh attestation verify wrote output the check cannot read.",
     };
   }
-  const certificates = results.map(
-    (result) => result?.verificationResult?.signature?.certificate,
-  );
   return {
     ok: true,
-    commits: certificates.flatMap((certificate) => [
-      certificate?.sourceRepositoryDigest,
-      certificate?.buildSignerDigest,
-    ]),
-    sources: certificates.map(
-      (certificate) => certificate?.sourceRepositoryDigest,
+    certificates: results.map(
+      (result) => result?.verificationResult?.signature?.certificate,
     ),
   };
 }
@@ -255,7 +254,16 @@ async function sourcePinAt(owner, repo, commit) {
 }
 
 const index = JSON.parse(await readFile(catalogPath, "utf8"));
+const pins = parseRepositoryPins(JSON.parse(await readFile(pinsPath, "utf8")));
+if (!pins.ok) {
+  console.error(`${pinsPath} is not a list of repositories:\n`);
+  for (const issue of pins.issues) {
+    console.error(`  - ${issue}`);
+  }
+  process.exit(1);
+}
 const problems = await catalogProblems(index, {
+  repositoryPins: pins.pins,
   sdk,
   themeTools,
   releaseOf,
