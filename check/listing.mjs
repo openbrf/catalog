@@ -509,6 +509,9 @@ async function pluginProblems(entry, bytes, built, deps) {
         recipientSet(entry.recipients ?? []),
         recipientSet(manifest.recipients ?? []),
       ],
+      // Absent is false on both sides, and a core that does not know `ai` yet
+      // reads neither, so this holds before and after the core moves.
+      ["ai", entry.ai ?? false, manifest.ai ?? false],
     ];
     for (const [field, listed, packaged] of disagreements) {
       if (canonical(listed) !== canonical(packaged)) {
