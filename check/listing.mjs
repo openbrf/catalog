@@ -9,9 +9,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
  * those rules are enforced for the curated catalog.
  *
  * Nothing here reaches the network or the core by itself. The caller hands in
- * the core's own packages and the three things that do reach out - reading a
- * release, downloading an artifact, verifying an attestation - so the rules are
- * tested offline against fixtures and run for real in CI.
+ * the core's own packages and the things that do reach out - reading a
+ * release, downloading an artifact, verifying an attestation, asking whether a
+ * commit is on the default branch, whether a repository is public and what a
+ * release repository pins - so the rules are tested offline against fixtures
+ * and run for real in CI.
  */
 
 /**
@@ -25,8 +27,25 @@ export const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 /** A path segment of a release URL: no percent-encoding, no dot segments. */
 const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
+/**
+ * The workflow, in the package's own repository, whose attestation a listing
+ * carries. One path for every listing, so a workflow added on a branch under
+ * another name signs nothing the catalog accepts.
+ */
+export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
+
+/**
+ * The file at a package's root in which a package built in a release-only
+ * repository names the source it was built from.
+ */
+export const SOURCE_FILE = "source.json";
+
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
+/** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
+const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/** The most unknown fields of a source record one problem names. */
+const MAX_NAMED_FIELDS = 5;
 
 /**
  * @typedef {object} ListingDeps
@@ -35,9 +54,29 @@ const HEX_PATTERN = /^[0-9a-f]{128}$/i;
  * @property {(owner: string, repo: string, tag: string) => Promise<Release | null>} releaseOf
  *   The release published under a tag, or null when there is none.
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} fetchArtifact
- * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string) => Promise<string | null>} verifyAttestation
- *   Null when the bytes carry a build attestation from a run on the tag in the
- *   repository, else why not.
+ * @property {(bytes: Uint8Array, fileName: string, repository: string, tag: string, workflow: string) => Promise<Attestation>} verifyAttestation
+ *   Whether the bytes carry a build attestation signed by the workflow at that
+ *   path in the repository, in a run on the tag. Always asked of the
+ *   repository the release is in, never of the source repository a
+ *   release-only listing names.
+ * @property {(owner: string, repo: string, commit: string) => Promise<DefaultBranch>} defaultBranchHas
+ *   Whether a commit is the head of the repository's default branch or an
+ *   ancestor of it.
+ * @property {(owner: string, repo: string) => Promise<boolean>} repositoryIsPublic
+ *   Whether GitHub shows the repository to anyone. False for a private
+ *   repository and for one that does not exist, which it does not tell apart.
+ * @property {(owner: string, repo: string, commit: string) => Promise<Uint8Array | null>} sourcePinAt
+ *   The repository's own `source.json` at a commit, or null when it has none.
+ *
+ * @typedef {{ ok: true, commits: unknown[], sources: unknown[] } | { ok: false, reason: string }} Attestation
+ *   When it verifies, the commits its attestations name, as the certificates
+ *   state them: in `commits` the source each was built from and the commit the
+ *   signing workflow was read at, in `sources` the source each was built from
+ *   alone.
+ *
+ * @typedef {object} DefaultBranch
+ * @property {string} branch
+ * @property {boolean} has
  *
  * @typedef {object} Release
  * @property {boolean} draft
@@ -60,7 +99,7 @@ const HEX_PATTERN = /^[0-9a-f]{128}$/i;
 export async function catalogProblems(input, deps) {
   const parsed = deps.sdk.parseCatalogIndex(input);
   if (!parsed.ok) {
-    return parsed.issues.map((issue) => `catalog.json: ${issue}`);
+    return parsed.issues.map((issue) => oneLine(`catalog.json: ${issue}`));
   }
 
   const { entries } = parsed.value;
@@ -103,7 +142,9 @@ export async function catalogProblems(input, deps) {
 
     // Catalog policy: a deprecated entry is kept for the instances that have
     // it and offered to no new one, so a theme still offered extends none.
-    const deprecated = ancestors.find((ancestor) => ancestor.deprecated === true);
+    const deprecated = ancestors.find(
+      (ancestor) => ancestor.deprecated === true,
+    );
     if (deprecated !== undefined && entry.deprecated !== true) {
       problems.push(
         `${label}: extends ${through(ancestors, deprecated)}, which is deprecated in this index, so a new install cannot install ${deprecated.id}.`,
@@ -141,7 +182,16 @@ export async function catalogProblems(input, deps) {
     }
   }
 
-  return problems;
+  return problems.map(oneLine);
+}
+
+/**
+ * A problem as one line. A problem quotes text from a listing's package, and a
+ * line break in it would start a line of its own in the CI log, which the
+ * runner reads for workflow commands.
+ */
+function oneLine(problem) {
+  return problem.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 
 /**
@@ -236,14 +286,81 @@ async function entryProblems(entry, deps, themes) {
     location.file,
     `${location.owner}/${location.repo}`,
     location.tag,
+    RELEASE_WORKFLOW,
   );
-  if (attestation !== null) {
-    return [`the artifact's build attestation does not verify: ${attestation}`];
+  if (!attestation.ok) {
+    // gh names the claim that failed only for some; a wrong workflow it reports
+    // as a failure to verify, so the message says what was asked for.
+    return [
+      `the artifact's build attestation does not verify as made by ${RELEASE_WORKFLOW} of ${location.owner}/${location.repo} in a run on ${location.tag}, on a GitHub-hosted runner: ${attestation.reason}`,
+    ];
   }
 
+  const provenance = await provenanceProblems(
+    attestation.commits,
+    location,
+    deps,
+  );
+  if (provenance.length > 0) {
+    return provenance;
+  }
+
+  const built = { location, sources: attestation.sources };
   return entry.type === "plugin"
-    ? pluginProblems(entry, bytes, deps)
-    : themeProblems(entry, bytes, deps, themes);
+    ? pluginProblems(entry, bytes, built, deps)
+    : themeProblems(entry, bytes, built, deps, themes);
+}
+
+/**
+ * Why the attested commits do not tie the artifact to the default branch, or
+ * nothing.
+ *
+ * A tag push runs the release workflow as it is at the tagged commit, so a
+ * workflow that checks its own commit is on `main` can be edited on a branch,
+ * tagged there and still sign. The catalog asks GitHub instead: every commit
+ * an attestation names, the source and the one the workflow was read at, has
+ * to be on the repository's default branch, which only a reviewed pull request
+ * reaches.
+ */
+async function provenanceProblems(commits, location, deps) {
+  if (commits.length === 0) {
+    return [
+      "the artifact's build attestation names no commit it was built from.",
+    ];
+  }
+  const unique = [...new Set(commits)];
+  // An index, not the value: a certificate without the claim gives undefined.
+  const malformed = unique.findIndex(
+    (commit) => typeof commit !== "string" || !COMMIT_PATTERN.test(commit),
+  );
+  if (malformed !== -1) {
+    return [
+      `the artifact's build attestation names ${String(JSON.stringify(unique[malformed]))}, which is not a commit id.`,
+    ];
+  }
+
+  const problems = [];
+  for (const commit of unique) {
+    let answer;
+    try {
+      answer = await deps.defaultBranchHas(
+        location.owner,
+        location.repo,
+        commit,
+      );
+    } catch (error) {
+      problems.push(
+        `whether the attested commit ${commit} is on the default branch could not be read: ${error.message}`,
+      );
+      continue;
+    }
+    if (!answer.has) {
+      problems.push(
+        `the artifact's build attestation names the commit ${commit}, which is not on ${answer.branch} of ${location.owner}/${location.repo}; release only what ${answer.branch} has merged.`,
+      );
+    }
+  }
+  return problems;
 }
 
 /**
@@ -306,7 +423,9 @@ function releaseProblems(release, location, bytes) {
   if (release.immutable !== true) {
     return `the release ${where} is not immutable, so its assets could be replaced.`;
   }
-  const asset = release.assets.find((candidate) => candidate.name === location.file);
+  const asset = release.assets.find(
+    (candidate) => candidate.name === location.file,
+  );
   if (asset === undefined) {
     return `the release ${where} has no asset ${location.file}.`;
   }
@@ -320,7 +439,7 @@ function releaseProblems(release, location, bytes) {
  * A plugin package: it agrees with its entry and passes the SDK's package
  * check, the same one a plugin's own CI runs.
  */
-function pluginProblems(entry, bytes, deps) {
+async function pluginProblems(entry, bytes, built, deps) {
   let files;
   try {
     files = deps.themeTools.readThemeArchive(bytes);
@@ -352,6 +471,7 @@ function pluginProblems(entry, bytes, deps) {
   const server = files.get(serverPath);
 
   const problems = [
+    ...(await sourceProblems(files, built, deps)),
     ...deps.sdk.pluginPackageProblems({
       packageJson,
       files: [...files.keys()],
@@ -397,7 +517,7 @@ function pluginProblems(entry, bytes, deps) {
  * A theme package: it agrees with its entry. The lint runs once every theme
  * in the index has been read.
  */
-function themeProblems(entry, bytes, deps, themes) {
+async function themeProblems(entry, bytes, built, deps, themes) {
   const read = deps.themeTools.readThemePackage(bytes);
   if (!read.ok) {
     return read.issues.map(
@@ -406,7 +526,7 @@ function themeProblems(entry, bytes, deps, themes) {
   }
 
   const { manifest } = read.package;
-  const problems = [];
+  const problems = await sourceProblems(read.package.files, built, deps);
   const disagreements = [
     ["name", entry.id, manifest.name],
     ["version", entry.version, manifest.version],
@@ -425,6 +545,259 @@ function themeProblems(entry, bytes, deps, themes) {
     themes.set(entry.id, read.package);
   }
   return problems;
+}
+
+/**
+ * Why the package's record of the source it was built from is not one a
+ * listing accepts, or nothing.
+ *
+ * A package released from a release-only repository names the repository its
+ * source is in and the commit it was built from, inside the attested bytes
+ * rather than in the release notes, which stay editable on an immutable
+ * release. The release workflow writes those bytes, so the attestation fixes
+ * the record without proving it: it is the author's statement of the source.
+ * Two rules keep that statement from borrowing anyone else's. It names no
+ * repository the public can read, because a package whose source is public is
+ * released from that repository. And it is a copy of the release repository's
+ * own `source.json` at the commit the attestation names, so it is a pin in the
+ * public history of the repository that signed it. The source itself may be
+ * private, so the check cannot read whether the commit exists. A package
+ * without the record, from a repository that pins none, was built from the
+ * commit its attestation names.
+ */
+async function sourceProblems(files, { location, sources }, deps) {
+  const file = files.get(SOURCE_FILE);
+  const problems =
+    file === undefined ? [] : await recordProblems(file, location, deps);
+
+  const commits = Array.isArray(sources) ? [...new Set(sources)] : [];
+  if (commits.length === 0) {
+    problems.push(
+      `the artifact's build attestation names no source commit, at which the ${SOURCE_FILE} of ${location.owner}/${location.repo} would be read.`,
+    );
+  }
+  for (const commit of commits) {
+    problems.push(...(await pinProblems(file, location, commit, deps)));
+  }
+  return problems;
+}
+
+/** Why the record itself is not one a listing accepts, or nothing. */
+async function recordProblems(file, location, deps) {
+  let text;
+  let record;
+  try {
+    text = new TextDecoder("utf8", { fatal: true }).decode(file);
+    record = JSON.parse(text);
+  } catch {
+    return [`the package's ${SOURCE_FILE} is not readable JSON.`];
+  }
+  if (record === null || typeof record !== "object" || Array.isArray(record)) {
+    return [
+      `the package's ${SOURCE_FILE} is not an object naming the source's \`repository\` and \`commit\`.`,
+    ];
+  }
+  // JSON.parse keeps the last of a repeated field, where another reader of
+  // the same bytes may keep the first.
+  const repeated = repeatedKey(text);
+  if (repeated !== undefined) {
+    return [
+      `the package's ${SOURCE_FILE} names the field ${JSON.stringify(repeated)} more than once.`,
+    ];
+  }
+
+  const problems = [];
+  const unknown = Object.keys(record).filter(
+    (field) => field !== "repository" && field !== "commit",
+  );
+  if (unknown.length > 0) {
+    // Quoted: a field name is the package's text, and a line break in it
+    // would start a line of its own in the CI log.
+    const named = unknown
+      .slice(0, MAX_NAMED_FIELDS)
+      .map((field) => JSON.stringify(field))
+      .join(", ");
+    const more =
+      unknown.length > MAX_NAMED_FIELDS
+        ? ` and ${String(unknown.length - MAX_NAMED_FIELDS)} more`
+        : "";
+    problems.push(
+      `the package's ${SOURCE_FILE} has fields a listing does not define: ${named}${more}.`,
+    );
+  }
+
+  const repository = sourceRepository(record.repository, location);
+  if (typeof repository === "string") {
+    problems.push(repository);
+  } else {
+    const named = `${repository.owner}/${repository.repo}`;
+    let isPublic;
+    try {
+      isPublic = await deps.repositoryIsPublic(
+        repository.owner,
+        repository.repo,
+      );
+    } catch (error) {
+      problems.push(
+        `whether ${named}, which the package's ${SOURCE_FILE} names, is public could not be read: ${error.message}`,
+      );
+    }
+    if (isPublic === true) {
+      problems.push(
+        `the package's ${SOURCE_FILE} names ${named}, which is public; a package whose source is public is released from its source repository, without ${SOURCE_FILE}.`,
+      );
+    }
+  }
+
+  if (record.commit === undefined) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names no \`commit\` it was built from.`,
+    );
+  } else if (
+    typeof record.commit !== "string" ||
+    !COMMIT_PATTERN.test(record.commit)
+  ) {
+    problems.push(
+      `the package's ${SOURCE_FILE} names the commit ${JSON.stringify(record.commit)}, which is not a full commit id of 40 or 64 lowercase hexadecimal characters.`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * The GitHub repository a source record names, or why it is not one.
+ *
+ * Exactly `https://github.com/<owner>/<repository>`, read as written as the
+ * artifact URL is. Another host is refused because the check cannot ask it
+ * whether the repository is public. The release's own repository is refused: a
+ * package built there has its commit named by its attestation, and a record
+ * repeating it could only disagree.
+ */
+function sourceRepository(repository, location) {
+  if (repository === undefined) {
+    return `the package's ${SOURCE_FILE} names no \`repository\` its source is in.`;
+  }
+  const refuse = `the package's ${SOURCE_FILE} names the repository ${JSON.stringify(repository)}, which is not https://github.com/<owner>/<repository>.`;
+  if (typeof repository !== "string") {
+    return refuse;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(repository);
+  } catch {
+    return refuse;
+  }
+  if (
+    parsed.href !== repository ||
+    parsed.protocol !== "https:" ||
+    parsed.host !== "github.com" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    return refuse;
+  }
+  const segments = parsed.pathname.split("/");
+  if (segments.length !== 3) {
+    return refuse;
+  }
+  const [, owner, repo] = segments;
+  if (
+    ![owner, repo].every((segment) => SEGMENT.test(segment)) ||
+    repo.endsWith(".git")
+  ) {
+    return refuse;
+  }
+
+  // GitHub reads owner and repository names case-insensitively.
+  if (
+    `${owner}/${repo}`.toLowerCase() ===
+    `${location.owner}/${location.repo}`.toLowerCase()
+  ) {
+    return `the package's ${SOURCE_FILE} names ${location.owner}/${location.repo}, the repository it is released from; a package built there has no ${SOURCE_FILE}, because its attestation names the commit.`;
+  }
+  return { owner, repo };
+}
+
+/**
+ * Why the package's record, or its absence, is not the pin the release
+ * repository has at an attested source commit, or nothing.
+ *
+ * Compared as bytes: the release workflow copies the pin into the package
+ * unchanged, so every reader of either file reads the same record.
+ */
+async function pinProblems(file, location, commit, deps) {
+  const where = `${location.owner}/${location.repo}`;
+  if (typeof commit !== "string" || !COMMIT_PATTERN.test(commit)) {
+    return [
+      `the artifact's build attestation names the source ${String(JSON.stringify(commit))}, which is not a commit id.`,
+    ];
+  }
+
+  let pin;
+  try {
+    pin = await deps.sourcePinAt(location.owner, location.repo, commit);
+  } catch (error) {
+    return [
+      `the ${SOURCE_FILE} of ${where} at ${commit} could not be read: ${error.message}`,
+    ];
+  }
+  if (pin === null) {
+    return file === undefined
+      ? []
+      : [
+          `the package has a ${SOURCE_FILE}, and ${where} has none at ${commit}, the commit its attestation names; a release-only repository pins the source it builds in a ${SOURCE_FILE} of its own, and the package carries a copy.`,
+        ];
+  }
+  if (file === undefined) {
+    return [
+      `${where} pins a source in its ${SOURCE_FILE} at ${commit}, the commit its attestation names, and the package carries no copy of it.`,
+    ];
+  }
+  if (!Buffer.from(file).equals(Buffer.from(pin))) {
+    return [
+      `the package's ${SOURCE_FILE} is not a copy of the one ${where} has at ${commit}, the commit its attestation names; the release workflow copies the pin into the package unchanged.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * The first field the top-level object of valid JSON text names twice, or
+ * undefined. Strings are skipped whole, so braces and colons inside them are
+ * not read as structure.
+ */
+function repeatedKey(text) {
+  const keys = new Set();
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      let end = index + 1;
+      while (text[end] !== '"') {
+        end += text[end] === "\\" ? 2 : 1;
+      }
+      let next = end + 1;
+      while (" \t\n\r".includes(text[next])) {
+        next += 1;
+      }
+      if (depth === 1 && text[next] === ":") {
+        const key = JSON.parse(text.slice(index, end + 1));
+        if (keys.has(key)) {
+          return key;
+        }
+        keys.add(key);
+      }
+      index = end;
+    } else if (char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth -= 1;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -465,7 +838,9 @@ function canonical(value) {
   return JSON.stringify(value, (_key, inner) =>
     inner !== null && typeof inner === "object" && !Array.isArray(inner)
       ? Object.fromEntries(
-          Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          Object.entries(inner).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
         )
       : inner,
   );
