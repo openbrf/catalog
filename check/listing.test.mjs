@@ -12,6 +12,7 @@ import { sdk, themeTools } from "./core.mjs";
 import {
   RELEASE_WORKFLOW,
   catalogProblems,
+  expectedClaims,
   releaseLocation,
 } from "./listing.mjs";
 
@@ -121,9 +122,35 @@ const ON_MAIN = "a".repeat(40);
 const OFF_MAIN = "b".repeat(40);
 
 /**
+ * A certificate as `gh attestation verify --format json` reports it for a run
+ * of the repository's release workflow on the tag, from a commit on main.
+ */
+function certificate(repository, tag, overrides = {}) {
+  const uri = `https://github.com/${repository}`;
+  const workflow = `${uri}/.github/workflows/release.yml@refs/tags/${tag}`;
+  return {
+    certificateIssuer: "CN=sigstore-intermediate,O=sigstore.dev",
+    subjectAlternativeName: workflow,
+    issuer: "https://token.actions.githubusercontent.com",
+    githubWorkflowTrigger: "push",
+    buildSignerURI: workflow,
+    buildSignerDigest: ON_MAIN,
+    runnerEnvironment: "github-hosted",
+    sourceRepositoryURI: uri,
+    sourceRepositoryDigest: ON_MAIN,
+    sourceRepositoryRef: `refs/tags/${tag}`,
+    buildConfigURI: workflow,
+    buildConfigDigest: ON_MAIN,
+    buildTrigger: "push",
+    ...overrides,
+  };
+}
+
+/**
  * Dependencies answering from a set of published files: each URL is an asset
  * of an immutable release holding exactly those bytes, with an attestation
- * built from a commit on main.
+ * built from a commit on main. `options.certificates` changes the attestation:
+ * one certificate for each set of claims it overrides.
  */
 function published(files, options = {}) {
   const byUrl = new Map(files.map((file) => [file.url, file.bytes]));
@@ -156,8 +183,15 @@ function published(files, options = {}) {
       }
       return bytes;
     },
-    async verifyAttestation() {
-      return options.attestation ?? { ok: true, commits: [ON_MAIN, ON_MAIN] };
+    async verifyAttestation(_bytes, _fileName, repository, tag) {
+      return (
+        options.attestation ?? {
+          ok: true,
+          certificates: (options.certificates ?? [{}]).map((overrides) =>
+            certificate(repository, tag, overrides),
+          ),
+        }
+      );
     },
     async defaultBranchHas(_owner, _repo, commit) {
       return { branch: "main", has: commit === ON_MAIN };
@@ -332,7 +366,7 @@ describe("a listing", () => {
       workflow,
     ) => {
       calls.push({ fileName, repository, tag, workflow });
-      return { ok: true, commits: [ON_MAIN, ON_MAIN] };
+      return { ok: true, certificates: [certificate(repository, tag)] };
     };
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
@@ -364,13 +398,122 @@ describe("a listing", () => {
     );
   });
 
+  it("names the claims the attestation is held to", () => {
+    const workflow =
+      "https://github.com/example/openbrf-occupancy/.github/workflows/release.yml@refs/tags/v1.0.0";
+    assert.deepEqual(
+      expectedClaims({ owner: "example", repo: "openbrf-occupancy", tag: "v1.0.0" }),
+      {
+        issuer: "https://token.actions.githubusercontent.com",
+        sourceRepositoryURI: "https://github.com/example/openbrf-occupancy",
+        sourceRepositoryRef: "refs/tags/v1.0.0",
+        buildSignerURI: workflow,
+        buildConfigURI: workflow,
+        runnerEnvironment: "github-hosted",
+      },
+    );
+  });
+
+  // gh before v2.102.0 matched --signer-workflow as an unanchored prefix, with
+  // `.` matching any character, so the check compares the claims itself.
+  describe("fails, before asking GitHub about any commit, when the certificate states", () => {
+    const repository = "https://github.com/example/openbrf-occupancy";
+    const workflows = `${repository}/.github/workflows`;
+    for (const [why, overrides] of [
+      [
+        "a workflow whose path only starts with release.yml",
+        { buildSignerURI: `${workflows}/release.yml.x.yml@refs/tags/v1.0.0` },
+      ],
+      [
+        "a workflow whose path matches release.yml as a pattern",
+        { buildSignerURI: `${workflows}/release_yml@refs/tags/v1.0.0` },
+      ],
+      [
+        "the workflow read at main",
+        { buildSignerURI: `${workflows}/release.yml@refs/heads/main` },
+      ],
+      [
+        "the workflow read at another tag",
+        { buildSignerURI: `${workflows}/release.yml@refs/tags/v1.0.0-x` },
+      ],
+      [
+        "the release workflow called by another one",
+        { buildConfigURI: `${workflows}/other.yml@refs/tags/v1.0.0` },
+      ],
+      [
+        "the release workflow of another repository",
+        {
+          buildSignerURI:
+            "https://github.com/example/other/.github/workflows/release.yml@refs/tags/v1.0.0",
+        },
+      ],
+      [
+        "a source in another repository",
+        { sourceRepositoryURI: `${repository}-fork` },
+      ],
+      ["a run on main", { sourceRepositoryRef: "refs/heads/main" }],
+      ["a self-hosted runner", { runnerEnvironment: "self-hosted" }],
+      ["another issuer", { issuer: "https://issuer.example" }],
+      ["no runner at all", { runnerEnvironment: undefined }],
+    ]) {
+      it(why, async () => {
+        const deps = published([pluginFile], { certificates: [overrides] });
+        deps.defaultBranchHas = async () => {
+          throw new Error("not asked about an attestation from another signer");
+        };
+        const problems = await catalogProblems(
+          { version: 1, entries: [pluginEntry(plugin)] },
+          deps,
+        );
+        const [claim, value] = Object.entries(overrides)[0];
+        const expected = expectedClaims({
+          owner: "example",
+          repo: "openbrf-occupancy",
+          tag: "v1.0.0",
+        })[claim];
+        assert.deepEqual(problems, [
+          `plugin occupancy 1.0.0: the artifact's build attestation states ${claim} ${String(JSON.stringify(value))}, not ${JSON.stringify(expected)}.`,
+        ]);
+      });
+    }
+  });
+
+  it("fails when any of several attestations is from another signer", async () => {
+    const problems = await catalogProblems(
+      { version: 1, entries: [pluginEntry(plugin)] },
+      published([pluginFile], {
+        certificates: [{}, { runnerEnvironment: "self-hosted" }],
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /states runnerEnvironment "self-hosted"/);
+  });
+
+  it("fails when gh reports no attestation, or one without a certificate", async () => {
+    for (const certificates of [[], [null], [undefined]]) {
+      const problems = await catalogProblems(
+        { version: 1, entries: [pluginEntry(plugin)] },
+        published([pluginFile], {
+          attestation: { ok: true, certificates },
+        }),
+      );
+      assert.equal(problems.length, 1, String(certificates));
+      assert.match(
+        problems[0],
+        /reported no attestation that verified|has no certificate the check can read/,
+      );
+    }
+  });
+
   // A tag push runs the workflow as the tagged commit has it, so its own check
   // that the commit is on main can be deleted on a branch that is then tagged.
   it("fails when the attested source is a commit main does not have", async () => {
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
       published([pluginFile, themeFile], {
-        attestation: { ok: true, commits: [OFF_MAIN, OFF_MAIN] },
+        certificates: [
+          { sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN },
+        ],
       }),
     );
     assert.equal(problems.length, 2);
@@ -388,7 +531,7 @@ describe("a listing", () => {
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
-        attestation: { ok: true, commits: [ON_MAIN, OFF_MAIN] },
+        certificates: [{ buildSignerDigest: OFF_MAIN }],
       }),
     );
     assert.equal(problems.length, 1);
@@ -399,10 +542,10 @@ describe("a listing", () => {
     const problems = await catalogProblems(
       { version: 1, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
-        attestation: {
-          ok: true,
-          commits: [ON_MAIN, ON_MAIN, OFF_MAIN, OFF_MAIN],
-        },
+        certificates: [
+          {},
+          { sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN },
+        ],
       }),
     );
     assert.equal(problems.length, 1);
@@ -411,7 +554,7 @@ describe("a listing", () => {
 
   it("asks about each attested commit once, in the release's repository", async () => {
     const deps = published([pluginFile], {
-      attestation: { ok: true, commits: [ON_MAIN, ON_MAIN, ON_MAIN] },
+      certificates: [{}, {}],
     });
     const calls = [];
     deps.defaultBranchHas = async (owner, repo, commit) => {
@@ -428,17 +571,19 @@ describe("a listing", () => {
     ]);
   });
 
-  it("fails when the attestation names no commit, or something else", async () => {
-    for (const commits of [
-      [],
-      [undefined, undefined],
-      [ON_MAIN, "main"],
-      [ON_MAIN.toUpperCase(), ON_MAIN.toUpperCase()],
-      [`${ON_MAIN}/../x`, ON_MAIN],
+  it("fails when the attestation names something other than a commit", async () => {
+    for (const certificates of [
+      [{ sourceRepositoryDigest: undefined, buildSignerDigest: undefined }],
+      [{ buildSignerDigest: "main" }],
+      [
+        {
+          sourceRepositoryDigest: ON_MAIN.toUpperCase(),
+          buildSignerDigest: ON_MAIN.toUpperCase(),
+        },
+      ],
+      [{ sourceRepositoryDigest: `${ON_MAIN}/../x` }],
     ]) {
-      const deps = published([pluginFile], {
-        attestation: { ok: true, commits },
-      });
+      const deps = published([pluginFile], { certificates });
       deps.defaultBranchHas = async () => {
         throw new Error("not asked about a malformed commit");
       };
@@ -446,11 +591,11 @@ describe("a listing", () => {
         { version: 1, entries: [pluginEntry(plugin)] },
         deps,
       );
-      assert.equal(problems.length, 1, JSON.stringify(commits));
+      assert.equal(problems.length, 1, JSON.stringify(certificates));
       assert.match(
         problems[0],
-        /names no commit it was built from|which is not a commit id/,
-        JSON.stringify(commits),
+        /which is not a commit id/,
+        JSON.stringify(certificates),
       );
     }
   });

@@ -33,6 +33,9 @@ const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
  */
 export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 
+/** The OIDC issuer GitHub Actions on github.com signs with. */
+const ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
+
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
 /** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
@@ -52,10 +55,11 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  *   Whether a commit is the head of the repository's default branch or an
  *   ancestor of it.
  *
- * @typedef {{ ok: true, commits: unknown[] } | { ok: false, reason: string }} Attestation
- *   When it verifies, the commits its attestations name, as the certificates
- *   state them: the source each was built from and the commit the signing
- *   workflow was read at.
+ * @typedef {{ ok: true, certificates: unknown[] } | { ok: false, reason: string }} Attestation
+ *   When it verifies, the signing certificate of each attestation that did, as
+ *   `gh attestation verify --format json` reports it: an object of the claims
+ *   GitHub's OIDC token stated for the run, such as `buildSignerURI` and
+ *   `sourceRepositoryDigest`.
  *
  * @typedef {object} DefaultBranch
  * @property {string} branch
@@ -268,8 +272,16 @@ async function entryProblems(entry, deps, themes) {
     ];
   }
 
+  const signer = signerProblems(attestation.certificates, location);
+  if (signer.length > 0) {
+    return signer;
+  }
+
   const provenance = await provenanceProblems(
-    attestation.commits,
+    attestation.certificates.flatMap((certificate) => [
+      certificate.sourceRepositoryDigest,
+      certificate.buildSignerDigest,
+    ]),
     location,
     deps,
   );
@@ -283,6 +295,58 @@ async function entryProblems(entry, deps, themes) {
 }
 
 /**
+ * The claims every attestation's certificate states, each the whole string.
+ *
+ * `gh attestation verify` is asked for the same, but how it matches its flags
+ * is the installed gh's: before v2.102.0 `--signer-workflow` matched a prefix,
+ * so a pin on `release.yml` also accepted `release.yml.x.yml`. Comparing the
+ * claims here holds every gh to the same rule. The workflow that started the
+ * run (`buildConfigURI`) is the signer itself, so another workflow calling
+ * `release.yml` as a reusable one signs nothing the catalog accepts.
+ */
+export function expectedClaims({ owner, repo, tag }) {
+  const repository = `https://github.com/${owner}/${repo}`;
+  const workflow = `${repository}/${RELEASE_WORKFLOW}@refs/tags/${tag}`;
+  return {
+    issuer: ACTIONS_ISSUER,
+    sourceRepositoryURI: repository,
+    sourceRepositoryRef: `refs/tags/${tag}`,
+    buildSignerURI: workflow,
+    buildConfigURI: workflow,
+    runnerEnvironment: "github-hosted",
+  };
+}
+
+/**
+ * Why the verified certificates do not name the release workflow of the
+ * release's repository in a run on its tag, or nothing. Every certificate is
+ * held to every claim, so one stray attestation is enough to refuse.
+ */
+function signerProblems(certificates, location) {
+  if (certificates.length === 0) {
+    return ["gh attestation verify reported no attestation that verified."];
+  }
+  const expected = expectedClaims(location);
+  const problems = new Set();
+  for (const certificate of certificates) {
+    if (certificate === null || typeof certificate !== "object") {
+      problems.add(
+        "the artifact's build attestation has no certificate the check can read.",
+      );
+      continue;
+    }
+    for (const [claim, value] of Object.entries(expected)) {
+      if (certificate[claim] !== value) {
+        problems.add(
+          `the artifact's build attestation states ${claim} ${String(JSON.stringify(certificate[claim]))}, not ${JSON.stringify(value)}.`,
+        );
+      }
+    }
+  }
+  return [...problems];
+}
+
+/**
  * Why the attested commits do not tie the artifact to the default branch, or
  * nothing.
  *
@@ -290,15 +354,13 @@ async function entryProblems(entry, deps, themes) {
  * workflow that checks its own commit is on `main` can be edited on a branch,
  * tagged there and still sign. The catalog asks GitHub instead: every commit
  * an attestation names, the source and the one the workflow was read at, has
- * to be on the repository's default branch, which only a reviewed pull request
- * reaches.
+ * to be on the repository's default branch, the branch head or an ancestor of
+ * it. That proves the commit reached the branch, not that anyone reviewed it:
+ * whether a merge needs an approving review is the listed repository's branch
+ * rule, which the check does not read, so the person reviewing a listing
+ * confirms it.
  */
 async function provenanceProblems(commits, location, deps) {
-  if (commits.length === 0) {
-    return [
-      "the artifact's build attestation names no commit it was built from.",
-    ];
-  }
   const unique = [...new Set(commits)];
   // An index, not the value: a certificate without the claim gives undefined.
   const malformed = unique.findIndex(

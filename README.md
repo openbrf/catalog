@@ -20,7 +20,10 @@ A package is listed when:
   draft or a pre-release;
 - the tarball carries a build attestation from that repository's release
   workflow, `.github/workflows/release.yml`: made on a GitHub-hosted runner, by
-  a run of that repository on the release's tag `v<version>`;
+  a run of that repository on the release's tag `v<version>`, which that
+  workflow started itself rather than being called by another. The check reads
+  every verified certificate and compares its claims whole, so a workflow such
+  as `release.yml.x.yml` is refused whichever `gh` runs it;
 - the commits that attestation names, the source it was built from and the
   commit its workflow was read at, are on the repository's default branch. A
   tag push runs the workflow as the tagged commit has it, so a release
@@ -43,11 +46,19 @@ A package is listed when:
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`.
 
-A listed repository should also hold its `v*` tags to a tag ruleset that lets
-only its maintainers create, move or delete one. The check does not read a
-repository's settings, and refuses a release built off the default branch
-whatever they are; the ruleset stops anyone who can merely push from making
-such a release in the first place.
+The check does not read a listed repository's settings. It refuses a release
+built off the default branch whatever they are, but "on the default branch"
+means merged, not reviewed. A listed repository should therefore also have:
+
+- a tag ruleset on `refs/tags/v*` restricting creation, update and deletion,
+  which only the Admin role bypasses, so that anyone who can merely push
+  cannot make a release at all;
+- a ruleset on its default branch that requires a pull request with at least
+  one approving review, and approval of the most recent push by someone other
+  than the person who pushed it, so that a change to the release workflow
+  reaches the default branch only after a second person has read it. Requiring
+  a code owner's review, with `.github/workflows/` in `CODEOWNERS`, narrows
+  that reader to the people trusted with releases.
 
 ## How a listing is reviewed
 
@@ -58,18 +69,20 @@ such a release in the first place.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
    every push to `main` and every night. It reads the index with the core's own
    schema, looks up the release, downloads the artifact, recomputes its digest
-   and size, verifies its attestation and asks GitHub whether the attested
-   commit is on the default branch, unpacks it and compares its manifest with
-   the entry, then runs the package check or the install lint. The pull request
-   cannot merge until it passes. The schema and checks come from the
-   `openbrf/openbrf` commit pinned as `CORE_REF` in the workflow.
+   and size, verifies its attestation and compares its certificate's claims,
+   asks GitHub whether the attested commits are on the default branch, unpacks
+   it and compares its manifest with the entry, then runs the package check or
+   the install lint. The pull request cannot merge until it passes. The schema
+   and checks come from the `openbrf/openbrf` commit pinned as `CORE_REF` in the
+   workflow.
 3. **A person.** The check says whether a package installs, not whether it is
    safe: a plugin runs in the instance's process with its privileges. A
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
-   will be asked to consent to, and approves the pull request. Every file in
-   this repository is owned by the maintainers, the check included, so a change
-   to the check is reviewed the same way.
+   will be asked to consent to, confirms that the listed repository has the two
+   rulesets above, and approves the pull request. Every file in this repository
+   is owned by the maintainers, the check included, so a change to the check is
+   reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets
    `"deprecated": true` to keep existing installs while offering it to no new
    one. A nightly failure on a listed entry is fixed or delisted the same way.

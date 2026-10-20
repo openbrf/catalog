@@ -1,7 +1,7 @@
 /**
  * Checks catalog.json against every rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
- * attestation, and whether the commit that attestation names is on the
+ * attestation, and whether the commits that attestation names are on the
  * repository's default branch.
  *
  *   node check/cli.mjs [catalog.json]
@@ -140,7 +140,8 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
   }
 
   // One result per attestation that verified, each with the certificate's
-  // claims as GitHub's OIDC token stated them.
+  // claims as GitHub's OIDC token stated them. The listing checks compare
+  // those claims themselves rather than trust how this gh matches its flags.
   let results;
   try {
     results = JSON.parse(stdout);
@@ -155,13 +156,9 @@ async function verifyAttestation(bytes, fileName, repository, tag, workflow) {
   }
   return {
     ok: true,
-    commits: results.flatMap((result) => {
-      const certificate = result?.verificationResult?.signature?.certificate;
-      return [
-        certificate?.sourceRepositoryDigest,
-        certificate?.buildSignerDigest,
-      ];
-    }),
+    certificates: results.map(
+      (result) => result?.verificationResult?.signature?.certificate,
+    ),
   };
 }
 
