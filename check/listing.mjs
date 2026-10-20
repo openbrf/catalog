@@ -46,7 +46,7 @@ export const SOURCE_FILE = "source.json";
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
 /** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
-const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** The most unknown fields of a source record one problem names. */
 const MAX_NAMED_FIELDS = 5;
 
