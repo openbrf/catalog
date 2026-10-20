@@ -1,0 +1,251 @@
+# CodeRabbit configuration for the Open BRF curated catalog.
+#
+# Schema: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+#
+# Every instance reads catalog.json from main and offers what it lists, and the
+# check that decides what may be listed lives here too. So this repository is a
+# supply-chain gate, and the review is pointed at the two ways it can fail: a
+# listing that should not have passed, and a change to the check that lets the
+# next one pass. It follows the core repository's .coderabbit.yaml in
+# openbrf/openbrf; where it differs, the comment says why. Most tools default
+# to on, so each one switched off carries its reason.
+
+language: en-US
+
+# Capped at 250 characters by the schema; repo-wide rules live in the "**"
+# path instruction below.
+tone_instructions: >-
+  Be direct and specific: name the line, what breaks, and why. Skip praise and
+  skip restating the diff. This check decides what code runs inside every
+  instance, so a rule that fails open outranks anything else.
+
+reviews:
+  profile: assertive
+
+  # CODEOWNERS already requires a maintainer's approval on every file, so a
+  # blocking review state would only duplicate it.
+  request_changes_workflow: false
+
+  high_level_summary: true
+  changed_files_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  related_issues: true
+  related_prs: true
+
+  # A public repository is a shop window. No poems, no fortunes.
+  poem: false
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    # As in the core repository: a documentation-only pull request is not
+    # reviewed here, because reviews share an hourly allowance with the pull
+    # requests that carry code. The schema matches a keyword anywhere in the
+    # title, case-insensitively, so these catch "docs: ..." and
+    # "docs(scope): ...". A pull request that changes catalog.json or the check
+    # must not use the docs type.
+    ignore_title_keywords:
+      - "docs:"
+      - "docs("
+    # Never pause automatic reviews. By default CodeRabbit pauses them after
+    # five reviewed commits and answers every later push with "Review paused".
+    auto_pause_after_reviewed_commits: 0
+    base_branches:
+      - main
+
+  pre_merge_checks:
+    # No commitlint runs here, unlike the core, so a title outside the
+    # convention is a warning rather than an error.
+    title:
+      mode: warning
+      requirements: >-
+        The title should follow Conventional Commits, as in openbrf/openbrf,
+        since a squash merge turns it into the commit message on main. A scope
+        is OPTIONAL: both "type: subject" and "type(scope): subject" are valid.
+        Do not ask for one. A pull request that adds, changes or removes a
+        listing names the package and the version. It must not contain AI
+        attribution.
+    description:
+      mode: warning
+    # The check comments why a rule exists, not what the next line does. A
+    # coverage threshold would push reviews toward the second kind.
+    docstrings:
+      mode: "off"
+
+  path_filters:
+    - "!**/node_modules/**"
+    # The core checkout the workflow and a local run put here.
+    - "!.core/**"
+
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        Repository-wide rules.
+
+        Never add AI attribution to anything you propose: no Co-authored-by
+        trailers naming an AI, no "Generated with" banners, no session links.
+        This applies to committable suggestions and to any commit message you
+        draft.
+
+        Whatever merges to main is offered to every instance, so this
+        repository is reviewed as a security boundary. Prefer a small number of
+        findings that would actually change the code or the listing over
+        exhaustive commentary. If a change is fine, say so briefly rather than
+        inventing something to raise.
+
+        The rules a listing must meet are stated in README.md and, as the
+        contract, under "Distribution and installation" in
+        docs/plugin-contract.md of openbrf/openbrf. When README.md and the
+        check disagree, that is a finding: one of them is wrong.
+
+    - path: "catalog.json"
+      instructions: >-
+        Each entry is a listing, read by every instance with parseCatalogIndex
+        from @openbrf/plugin-sdk. The Listing checks workflow verifies the
+        release, the digest and size, the attestation, the commit on the
+        default branch and the manifest, so do not repeat those checks by hand.
+        Review what the check cannot see.
+
+        For a plugin, compare the entry's permissions, personal data
+        categories, actions and recipients with what the plugin plausibly
+        needs for the purpose its description states, and flag a declaration
+        broader than that purpose. The board consents to exactly this
+        declaration before anything is downloaded.
+
+        The name and description are the curator's text and must be given in
+        both Swedish and English. Flag one that is missing a language, or one
+        that promises more than the declaration allows.
+
+        Removing an entry takes the package away from new installs and leaves
+        existing ones without updates; "deprecated": true keeps existing
+        installs while offering it to no new one. Flag a removal whose pull
+        request does not say why the softer step was not enough. A theme's
+        parent must stay listed and not deprecated unless the theme is too.
+
+    - path: "check/**/*.mjs"
+      instructions: >-
+        This is the gate, and it must fail closed. Flag any path where an
+        unexpected shape, a network error, a timeout, a missing field or an
+        exception lets a listing pass rather than refusing it, and any
+        comparison that is looser than the README states (a prefix or
+        substring match where the rule is exact, a case-insensitive match on
+        an identifier, a pattern that is not anchored at both ends).
+
+        The tarball, the release and every GitHub response are untrusted
+        input. Flag a read without a size bound or a deadline, a path from a
+        package used without the checks on its segments, and JSON parsed
+        without checking its shape. Duplicate keys in a JSON document must not
+        let one reader see a different value from another.
+
+        listing.mjs reaches nothing by itself: the caller hands in the core's
+        packages and every function that reads the network, so the rules are
+        tested offline. Flag a network or filesystem call added to listing.mjs
+        instead of being passed in from cli.mjs.
+
+        The GitHub token is sent to api.github.com and nowhere else. Flag a
+        change that would send it with an artifact download or to any other
+        host.
+
+        A rule added or changed here changes what the README promises to
+        authors, so flag a rule change without the matching README change.
+
+    - path: "check/**/*.test.mjs"
+      instructions: >-
+        The tests run offline with node --test against fixtures built in
+        memory; none of them reaches the network. Flag a test that would. Each
+        refusal the check makes needs a test that shows the listing is refused
+        and names the problem, so flag a new rule that comes only with a
+        passing case. Flag a test that asserts only that a call did not throw.
+
+    - path: ".github/workflows/**"
+      instructions: >-
+        This repository is public and its workflow is the gate, so a workflow
+        is an attack surface. Flag actions referenced by anything other than a
+        full commit SHA, any use of pull_request_target, a token or secret
+        exposed to a step that does not need it, and a permissions block wider
+        than reading the repository and the attestations. A checkout must keep
+        persist-credentials: false.
+
+        CORE_REF pins the openbrf/openbrf commit whose schema and package
+        checks the listings are held to. It must be a full commit id, and
+        moving it changes the rules for every listing, so flag a move whose
+        pull request does not say what changed in the contract.
+
+    - path: ".github/CODEOWNERS"
+      instructions: >-
+        Every file needs a maintainer's review, the check included. Flag a
+        change that leaves any path without an owner or that narrows the
+        owners of check/, catalog.json or the workflow.
+
+    - path: "**/*.md"
+      instructions: >-
+        Documentation is in English. Swedish appears only in a listing's own
+        text and where a term is the point. Domain terms follow GLOSSARY.md in
+        openbrf/openbrf.
+
+  tools:
+    # Secrets. Belt and braces alongside GitHub push protection.
+    gitleaks:
+      enabled: true
+    # The workflow is the gate, so its correctness and its security matter.
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    yamllint:
+      enabled: true
+    # The workflow's run steps are shell.
+    shellcheck:
+      enabled: true
+    # The check is plain JavaScript and no linter runs on it in CI; oxlint's
+    # default rules are correctness ones, which cost little noise.
+    oxc:
+      enabled: true
+
+    # --- Deliberately off ---------------------------------------------------
+    # The governance text in README.md keeps hand-written formatting.
+    markdownlint:
+      enabled: false
+    # Prose linters on bilingual listing text produce more noise than signal.
+    languagetool:
+      enabled: false
+    vale:
+      enabled: false
+    # Not this repository's linters; enabling them only produces
+    # missing-config errors.
+    eslint:
+      enabled: false
+    biome:
+      enabled: false
+    # There are no dependencies to scan: the check runs on Node's own modules
+    # and the core checkout, whose advisories arrive in openbrf/openbrf.
+    osvScanner:
+      enabled: false
+
+chat:
+  auto_reply: true
+  # Listings are proposed by pull request, but the conversation about one is
+  # the maintainers' to have, not the bot's.
+  allow_non_org_members: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "README.md"
+  # The listing rules are the plugin contract's and the theme contract's, and
+  # the check runs the core's own schema and package checks.
+  linked_repositories:
+    - repository: "openbrf/openbrf"
+      instructions: >-
+        The Open BRF core. docs/plugin-contract.md ("Distribution and
+        installation") and docs/theme-contract.md state the rules a listing
+        must meet; packages/plugin-sdk holds parseCatalogIndex and
+        pluginPackageProblems, and packages/theme-tools the install lint, that
+        the check runs at CORE_REF. GLOSSARY.md fixes the domain terms.
+  # Keep what it learns to this repository rather than sharing it wider.
+  learnings:
+    scope: local
