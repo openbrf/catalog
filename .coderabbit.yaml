@@ -73,7 +73,7 @@ reviews:
     # The check comments why a rule exists, not what the next line does. A
     # coverage threshold would push reviews toward the second kind.
     docstrings:
-      mode: off
+      mode: "off"
 
   path_filters:
     - "!**/node_modules/**"
