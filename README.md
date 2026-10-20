@@ -52,11 +52,15 @@ A package is listed when:
   `@openbrf/theme-tools`;
 - a plugin connects to nothing outside the instance that it does not declare
   in its `recipients`
-  ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)).
-  A declaration is not a fence: a plugin runs with the instance's privileges,
-  and nothing in the host stops a connection it did not declare. The check
-  cannot see one either, so the maintainer reading the server bundle holds the
-  plugin to it (see below).
+  ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
+  and it sends personal data only through `host.recipients.fetch`, never by a
+  raw `fetch`, `http` or `https` request to a declared origin. The host
+  validates the request's disclosure against the recipient's declared
+  categories and records it only on that route. A declaration is not a fence:
+  a plugin runs with the instance's privileges, and nothing in the host stops a
+  connection it did not declare or a request that skips the route. The check
+  cannot see either, so the maintainer reading the server bundle holds the
+  plugin to both (see below).
 
 A listed repository should also hold its `v*` tags to a tag ruleset that lets
 only its maintainers create, move or delete one. The check does not read a
@@ -152,7 +156,11 @@ nor an instance needs one.
    server bundle as packed in the listed tarball, and the declaration the board
    will be asked to consent to, checks that every place the bundle connects to
    outside the instance is one of its `recipients` and receives no more than
-   that recipient declares, and approves the pull request. Every file in
+   that recipient declares, and that every request carrying personal data goes
+   through `host.recipients.fetch` and no other way (a raw `fetch`, `http` or
+   `https` call to a declared origin skips the host's disclosure validation and
+   audit record, so it is refused even though the origin is declared), and
+   approves the pull request. Every file in
    this repository is owned by the maintainers, the check included, so a change
    to the check is reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets
