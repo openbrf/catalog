@@ -4,7 +4,7 @@
  * attestation, and whether the commits that attestation names are on the
  * repository's default branch.
  *
- *   node check/cli.mjs [catalog.json]
+ *   node check/cli.mjs [catalog.json [repositories.json]]
  *
  * Reads the index schema and the package checks from a checkout of
  * openbrf/openbrf with its plugin-sdk and theme-tools built, at `.core` or
@@ -18,11 +18,12 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { sdk, themeTools } from "./core.mjs";
-import { catalogProblems } from "./listing.mjs";
+import { catalogProblems, parseRepositoryPins } from "./listing.mjs";
 
 const run = promisify(execFile);
 
 const catalogPath = resolve(process.argv[2] ?? "catalog.json");
+const pinsPath = resolve(process.argv[3] ?? "repositories.json");
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
 
 /** How long `gh attestation verify` may run. */
@@ -203,7 +204,16 @@ async function defaultBranchHas(owner, repo, commit) {
 }
 
 const index = JSON.parse(await readFile(catalogPath, "utf8"));
+const pins = parseRepositoryPins(JSON.parse(await readFile(pinsPath, "utf8")));
+if (!pins.ok) {
+  console.error(`${pinsPath} is not a list of repositories:\n`);
+  for (const issue of pins.issues) {
+    console.error(`  - ${issue}`);
+  }
+  process.exit(1);
+}
 const problems = await catalogProblems(index, {
+  repositoryPins: pins.pins,
   sdk,
   themeTools,
   releaseOf,

@@ -23,9 +23,14 @@ A package is listed when:
   a run of that repository on the release's tag `v<version>`, which that
   workflow started itself rather than being called by another. The check reads
   every verified certificate and compares its claims whole, so a workflow such
-  as `release.yml.x.yml` is refused whichever `gh` runs it;
-- the commits that attestation names, the source it was built from and the
-  commit its workflow was read at, are on the repository's default branch. A
+  as `release.yml.x.yml` is refused whichever `gh` runs it. It also holds the
+  repository to the numeric ids pinned for it in
+  [`repositories.json`](repositories.json), so a repository deleted or renamed
+  away and created again under the same name by someone else is refused, since
+  GitHub gives it new ids;
+- the commits that attestation names, the source it was built from, the commit
+  its workflow was read at and the one its run's configuration was read at, are
+  on the repository's default branch. A
   tag push runs the workflow as the tagged commit has it, so a release
   workflow's own check that the tag is on `main` can be edited away on a branch
   that is then tagged; the catalog asks GitHub instead;
@@ -67,7 +72,12 @@ with releases. Neither the check nor the reviewer holds a listing to this rule.
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
-   `catalog.json`, and link the release it points at. The `name` and
+   `catalog.json`, and link the release it points at. A repository not yet in
+   [`repositories.json`](repositories.json) is added there in the same pull
+   request, with the ids GitHub gives it:
+   `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
+   Confirm the repository is the one meant first: the ids are what a later
+   release is held to, so they are not asked of GitHub when the check runs. The `name` and
    `description` are the curator's text, in Swedish and English; the maintainers
    may rewrite them.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
@@ -84,7 +94,12 @@ with releases. Neither the check nor the reviewer holds a listing to this rule.
    maintainer named in [`CODEOWNERS`](.github/CODEOWNERS) reads the plugin's
    server bundle as packed in the listed tarball, and the declaration the board
    will be asked to consent to, confirms that the listed repository has the tag
-   ruleset above, and approves the pull request. Every file in this repository
+   ruleset above, and approves the pull request. The reviewer also checks each
+   new pin in [`repositories.json`](repositories.json) against
+   `gh api repos/<owner>/<repo>`, and refuses a change to or removal of an
+   existing pin that the pull request does not explain: a repository's id never
+   changes, so a different id for a listed repository means a different
+   repository. Every file in this repository
    is owned by the maintainers, the check included, so a change to the check is
    reviewed the same way.
 4. **Delisting.** A pull request that removes the entry, or sets

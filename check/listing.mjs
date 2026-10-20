@@ -54,6 +54,16 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * @property {(owner: string, repo: string, commit: string) => Promise<DefaultBranch>} defaultBranchHas
  *   Whether a commit is the head of the repository's default branch or an
  *   ancestor of it.
+ * @property {Record<string, RepositoryPin>} repositoryPins
+ *   The GitHub ids of each repository a listing may come from, by
+ *   `<owner>/<repo>` as the artifact URL writes it: `repositories.json`.
+ *
+ * @typedef {object} RepositoryPin
+ * @property {string} id
+ *   The repository's numeric id, as the certificate's
+ *   `sourceRepositoryIdentifier`.
+ * @property {string} ownerId
+ *   The owner's numeric id, as `sourceRepositoryOwnerIdentifier`.
  *
  * @typedef {{ ok: true, certificates: unknown[] } | { ok: false, reason: string }} Attestation
  *   When it verifies, the signing certificate of each attestation that did, as
@@ -71,6 +81,59 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * @property {boolean} immutable
  * @property {{ name: string, size: number }[]} assets
  */
+
+const GITHUB_ID = /^[1-9][0-9]*$/;
+
+/** A GitHub id as the certificate states it: a string of decimal digits. */
+const isGithubId = (value) => typeof value === "string" && GITHUB_ID.test(value);
+
+/**
+ * The repositories a listing may come from, read from `repositories.json`:
+ * each `<owner>/<repo>` as an artifact URL writes it, with the numeric ids
+ * GitHub gave the repository and its owner. The ids are written by a person,
+ * after confirming the repository is the one meant, in a change a maintainer
+ * reviews; they are not asked of GitHub when the check runs, since after a
+ * takeover GitHub names the new holder's.
+ *
+ * @param {unknown} input
+ * @returns {{ ok: true, pins: Record<string, RepositoryPin> } | { ok: false, issues: string[] }}
+ */
+export function parseRepositoryPins(input) {
+  const isObject = (value) =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isObject(input) || input.version !== 1 || !isObject(input.repositories)) {
+    return {
+      ok: false,
+      issues: ['expected {"version": 1, "repositories": {...}}.'],
+    };
+  }
+
+  const issues = [];
+  const pins = {};
+  for (const [name, pin] of Object.entries(input.repositories)) {
+    const [owner, repo, ...rest] = name.split("/");
+    if (
+      rest.length > 0 ||
+      ![owner, repo].every((segment) => SEGMENT.test(segment ?? ""))
+    ) {
+      issues.push(`${JSON.stringify(name)} is not "<owner>/<repo>".`);
+      continue;
+    }
+    if (
+      !isObject(pin) ||
+      Object.keys(pin).sort().join() !== "id,ownerId" ||
+      !isGithubId(pin.id) ||
+      !isGithubId(pin.ownerId)
+    ) {
+      issues.push(
+        `${name} states {"id", "ownerId"}, each the decimal digits GitHub gives as a string.`,
+      );
+      continue;
+    }
+    pins[name] = { id: pin.id, ownerId: pin.ownerId };
+  }
+  return issues.length === 0 ? { ok: true, pins } : { ok: false, issues };
+}
 
 /**
  * Checks a parsed `catalog.json`.
@@ -272,7 +335,14 @@ async function entryProblems(entry, deps, themes) {
     ];
   }
 
-  const signer = signerProblems(attestation.certificates, location);
+  const pin = deps.repositoryPins[`${location.owner}/${location.repo}`];
+  if (pin === undefined) {
+    return [
+      `${location.owner}/${location.repo} is not in repositories.json, so the attestation's repository ids cannot be held to anything. After confirming the repository is the one meant, add its ids from \`gh api repos/${location.owner}/${location.repo} --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'\`.`,
+    ];
+  }
+
+  const signer = signerProblems(attestation.certificates, location, pin);
   if (signer.length > 0) {
     return signer;
   }
@@ -281,6 +351,7 @@ async function entryProblems(entry, deps, themes) {
     attestation.certificates.flatMap((certificate) => [
       certificate.sourceRepositoryDigest,
       certificate.buildSignerDigest,
+      certificate.buildConfigDigest,
     ]),
     location,
     deps,
@@ -303,13 +374,20 @@ async function entryProblems(entry, deps, themes) {
  * claims here holds every gh to the same rule. The workflow that started the
  * run (`buildConfigURI`) is the signer itself, so another workflow calling
  * `release.yml` as a reusable one signs nothing the catalog accepts.
+ *
+ * The repository is also held to the ids pinned for it. A name says nothing of
+ * who holds it: a repository deleted or renamed away can be created again
+ * under the same name by someone else, whose runs state the same
+ * `sourceRepositoryURI`, but the ids GitHub gave the original ones.
  */
-export function expectedClaims({ owner, repo, tag }) {
+export function expectedClaims({ owner, repo, tag }, pin) {
   const repository = `https://github.com/${owner}/${repo}`;
   const workflow = `${repository}/${RELEASE_WORKFLOW}@refs/tags/${tag}`;
   return {
     issuer: ACTIONS_ISSUER,
     sourceRepositoryURI: repository,
+    sourceRepositoryIdentifier: pin.id,
+    sourceRepositoryOwnerIdentifier: pin.ownerId,
     sourceRepositoryRef: `refs/tags/${tag}`,
     buildSignerURI: workflow,
     buildConfigURI: workflow,
@@ -322,11 +400,11 @@ export function expectedClaims({ owner, repo, tag }) {
  * release's repository in a run on its tag, or nothing. Every certificate is
  * held to every claim, so one stray attestation is enough to refuse.
  */
-function signerProblems(certificates, location) {
+function signerProblems(certificates, location, pin) {
   if (certificates.length === 0) {
     return ["gh attestation verify reported no attestation that verified."];
   }
-  const expected = expectedClaims(location);
+  const expected = expectedClaims(location, pin);
   const problems = new Set();
   for (const certificate of certificates) {
     if (certificate === null || typeof certificate !== "object") {
@@ -353,7 +431,8 @@ function signerProblems(certificates, location) {
  * A tag push runs the release workflow as it is at the tagged commit, so a
  * workflow that checks its own commit is on `main` can be edited on a branch,
  * tagged there and still sign. The catalog asks GitHub instead: every commit
- * an attestation names, the source and the one the workflow was read at, has
+ * an attestation names, the source, the one the workflow was read at and the
+ * one the run's configuration was read at, has
  * to be on the repository's default branch, the branch head or an ancestor of
  * it. That proves the commit reached the branch, not that anyone reviewed it:
  * whether a merge needs an approving review is the listed repository's branch
