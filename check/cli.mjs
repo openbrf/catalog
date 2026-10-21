@@ -2,8 +2,9 @@
  * Checks catalog.json against every rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
  * attestation, whether the commits that attestation names are on the
- * repository's default branch, and for a release-only listing whether the
- * source it names is public and what its release repository pins.
+ * repository's default branch, for a release-only listing whether the source
+ * it names is public and what its release repository pins, and for a licensed
+ * plugin what its issuer publishes.
  *
  *   node check/cli.mjs [catalog.json [repositories.json]]
  *
@@ -216,6 +217,23 @@ async function sourcePinAt(owner, repo, commit) {
   return readAtMost(response, url, MAX_PIN_BYTES);
 }
 
+/**
+ * The document a licence's issuer publishes at its `issuer.url`. Never sent
+ * the token, and a redirect is refused rather than followed: the document is
+ * the one that address answers, so whoever holds the address is who vouches.
+ */
+async function issuerDocumentAt(url, maxBytes) {
+  const response = await fetch(url, {
+    redirect: "manual",
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok || response.body === null) {
+    throw new Error(`${url} answered ${String(response.status)}.`);
+  }
+  return readAtMost(response, url, maxBytes);
+}
+
 const index = JSON.parse(await readFile(catalogPath, "utf8"));
 const pins = parseRepositoryPins(JSON.parse(await readFile(pinsPath, "utf8")));
 if (!pins.ok) {
@@ -235,6 +253,7 @@ const problems = await catalogProblems(index, {
   defaultBranchHas,
   repositoryIsPublic,
   sourcePinAt,
+  issuerDocumentAt,
 });
 
 if (problems.length > 0) {

@@ -11,9 +11,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
  * Nothing here reaches the network or the core by itself. The caller hands in
  * the core's own packages and the things that do reach out - reading a
  * release, downloading an artifact, verifying an attestation, asking whether a
- * commit is on the default branch, whether a repository is public and what a
- * release repository pins - so the rules are tested offline against fixtures
- * and run for real in CI.
+ * commit is on the default branch, whether a repository is public, what a
+ * release repository pins and what a licence's issuer publishes - so the rules
+ * are tested offline against fixtures and run for real in CI.
  */
 
 /**
@@ -43,6 +43,16 @@ const ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
  */
 export const SOURCE_FILE = "source.json";
 
+/**
+ * The format of the document a licence's issuer publishes at its
+ * `licence.issuer.url`: its name, its keys and the repositories whose plugins
+ * it publishes.
+ */
+export const ISSUER_FORMAT = "openbrf-licence-issuer/1";
+
+/** The most bytes read of an issuer's document. */
+export const MAX_ISSUER_BYTES = 64 * 1024;
+
 const SRI_PATTERN = /^sha512-([A-Za-z0-9+/]+={0,2})$/;
 const HEX_PATTERN = /^[0-9a-f]{128}$/i;
 /** A full commit id: SHA-1, or SHA-256 in a repository that uses it. */
@@ -70,6 +80,9 @@ const MAX_NAMED_FIELDS = 5;
  *   repository and for one that does not exist, which it does not tell apart.
  * @property {(owner: string, repo: string, commit: string) => Promise<Uint8Array | null>} sourcePinAt
  *   The repository's own `source.json` at a commit, or null when it has none.
+ * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} issuerDocumentAt
+ *   The document a licence's issuer publishes at its `issuer.url`, read there
+ *   and not through a redirect. Asked once for each address in a run.
  * @property {Record<string, RepositoryPin>} repositoryPins
  *   The GitHub ids of each repository a listing may come from, by
  *   `<owner>/<repo>` as the artifact URL writes it: `repositories.json`.
@@ -104,6 +117,9 @@ const GITHUB_ID = /^[1-9][0-9]*$/;
 const isGithubId = (value) =>
   typeof value === "string" && GITHUB_ID.test(value);
 
+const isObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 /**
  * The repositories a listing may come from, read from `repositories.json`:
  * each `<owner>/<repo>` as an artifact URL writes it, with the numeric ids
@@ -116,8 +132,6 @@ const isGithubId = (value) =>
  * @returns {{ ok: true, pins: Record<string, RepositoryPin> } | { ok: false, issues: string[] }}
  */
 export function parseRepositoryPins(input) {
-  const isObject = (value) =>
-    value !== null && typeof value === "object" && !Array.isArray(value);
   if (
     !isObject(input) ||
     input.version !== 1 ||
@@ -177,12 +191,27 @@ export async function catalogProblems(input, deps) {
   const problems = [];
   /** Theme packages read from verified bytes, by id, for the lint below. */
   const themes = new Map();
+  /** The licence each plugin package declares, by entry, for the key ids below. */
+  const licences = new Map();
+  // Two plugins of one issuer name the same address, which is read once.
+  const issuerDocuments = new Map();
+  const read = {
+    ...deps,
+    issuerDocumentAt(url, maxBytes) {
+      if (!issuerDocuments.has(url)) {
+        issuerDocuments.set(url, deps.issuerDocumentAt(url, maxBytes));
+      }
+      return issuerDocuments.get(url);
+    },
+  };
 
   for (const entry of entries) {
     const label = `${entry.type} ${entry.id} ${entry.version}`;
-    const found = await entryProblems(entry, deps, themes);
+    const found = await entryProblems(entry, read, themes, licences);
     problems.push(...found.map((problem) => `${label}: ${problem}`));
   }
+
+  problems.push(...keyIdProblems(entries, licences));
 
   // Linted once every theme has been read, so a theme extending another in the
   // index is measured with its parent's values in place, as on an instance
@@ -299,7 +328,7 @@ function through(ancestors, ancestor) {
  * the later ones meaningless: nothing is unpacked from bytes whose digest has
  * not been verified.
  */
-async function entryProblems(entry, deps, themes) {
+async function entryProblems(entry, deps, themes, licences) {
   const { artifact } = entry;
 
   const location = releaseLocation(artifact.url, entry.version);
@@ -399,7 +428,7 @@ async function entryProblems(entry, deps, themes) {
     ),
   };
   return entry.type === "plugin"
-    ? pluginProblems(entry, bytes, built, deps)
+    ? pluginProblems(entry, bytes, built, deps, licences)
     : themeProblems(entry, bytes, built, deps, themes);
 }
 
@@ -589,7 +618,7 @@ function releaseProblems(release, location, bytes) {
  * A plugin package: it agrees with its entry and passes the SDK's package
  * check, the same one a plugin's own CI runs.
  */
-async function pluginProblems(entry, bytes, built, deps) {
+async function pluginProblems(entry, bytes, built, deps, licences) {
   let files;
   try {
     files = deps.themeTools.readThemeArchive(bytes);
@@ -619,9 +648,19 @@ async function pluginProblems(entry, bytes, built, deps) {
     ? normalizedPath(parsed.value.openbrf.entry.server ?? "")
     : "";
   const server = files.get(serverPath);
+  const licence = packagedLicence(
+    parsed.ok ? parsed.value.openbrf : {},
+    packageJson,
+  );
+  if (licence !== undefined) {
+    licences.set(entry, licence);
+  }
 
   const problems = [
     ...(await sourceProblems(files, built, deps)),
+    ...(licence === undefined
+      ? []
+      : await issuerProblems(licence, built.location, deps)),
     ...deps.sdk.pluginPackageProblems({
       packageJson,
       files: [...files.keys()],
@@ -663,6 +702,21 @@ async function pluginProblems(entry, bytes, built, deps) {
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
       ["ai", entry.ai ?? false, manifest.ai ?? false],
+      // The board consents to the licence a plugin reads, its audiences above
+      // all, before anything is downloaded (ADR 0042). Absent is none on both
+      // sides. The package's are read from its package.json when the pinned
+      // core's parser drops them, as recipients are, so a licensed package
+      // never passes as one that reads no licence.
+      [
+        "licence",
+        licenceForComparison(entry.licence ?? null),
+        licenceForComparison(licence ?? null),
+      ],
+      [
+        "release date",
+        entry.released ?? null,
+        manifest.released ?? packageJson.openbrf?.released ?? null,
+      ],
     ];
     for (const [field, listed, packaged] of disagreements) {
       if (canonical(listed) !== canonical(packaged)) {
@@ -928,13 +982,13 @@ async function pinProblems(file, location, commit, deps) {
 }
 
 /**
- * The first field the top-level object of valid JSON text names twice, or
+ * The first field any one object in valid JSON text names twice, or
  * undefined. Strings are skipped whole, so braces and colons inside them are
  * not read as structure.
  */
 function repeatedKey(text) {
-  const keys = new Set();
-  let depth = 0;
+  /** The fields of each object open at this point, innermost last; null for an array. */
+  const open = [];
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
     if (char === '"') {
@@ -946,7 +1000,8 @@ function repeatedKey(text) {
       while (" \t\n\r".includes(text[next])) {
         next += 1;
       }
-      if (depth === 1 && text[next] === ":") {
+      const keys = open.at(-1);
+      if (keys instanceof Set && text[next] === ":") {
         const key = JSON.parse(text.slice(index, end + 1));
         if (keys.has(key)) {
           return key;
@@ -954,10 +1009,12 @@ function repeatedKey(text) {
         keys.add(key);
       }
       index = end;
-    } else if (char === "{" || char === "[") {
-      depth += 1;
+    } else if (char === "{") {
+      open.push(new Set());
+    } else if (char === "[") {
+      open.push(null);
     } else if (char === "}" || char === "]") {
-      depth -= 1;
+      open.pop();
     }
   }
   return undefined;
@@ -1024,6 +1081,213 @@ function recipientSet(recipients) {
       ),
     )
     .sort();
+}
+
+/**
+ * The licence the package declares: the parsed manifest's, else the
+ * package.json's own when the pinned core's parser drops it. Undefined when it
+ * declares none; an explicit null stays, so it is refused below.
+ */
+function packagedLicence(manifest, packageJson) {
+  return manifest.licence ?? packageJson.openbrf?.licence;
+}
+
+/** A licence compared with its audiences as a set. */
+function licenceForComparison(licence) {
+  return isObject(licence) && Array.isArray(licence.audiences)
+    ? { ...licence, audiences: sorted(licence.audiences) }
+    : licence;
+}
+
+/**
+ * Why the issuer a licence names does not vouch for the plugin, or nothing
+ * (ADR 0042).
+ *
+ * A plugin's keys decide which licences it reads, and through `present()` it
+ * can show the issuer's services that the instance holds one. So the catalog
+ * reads the issuer's own word, the document it publishes at the `issuer.url`
+ * the licence names: the listing's repository is one whose plugins it
+ * publishes, and each key the licence declares is one of its own, under the
+ * same key id. Anyone can write a manifest naming an issuer; only the issuer
+ * writes what its address answers.
+ */
+async function issuerProblems(licence, location, deps) {
+  const declared = licenceDeclaration(licence);
+  if (typeof declared === "string") {
+    return [declared];
+  }
+  const { name, url, keys } = declared;
+
+  let bytes;
+  try {
+    bytes = await deps.issuerDocumentAt(url, MAX_ISSUER_BYTES);
+  } catch (error) {
+    return [
+      `the document of the licence's issuer at ${url} could not be read: ${error.message}`,
+    ];
+  }
+  const issuer = parseIssuerDocument(bytes);
+  if (typeof issuer === "string") {
+    return [`the document of the licence's issuer at ${url} ${issuer}`];
+  }
+
+  const problems = [];
+  if (issuer.name !== name) {
+    problems.push(
+      `the package's licence names its issuer ${JSON.stringify(name)}, and the issuer's document at ${url} names it ${JSON.stringify(issuer.name)}.`,
+    );
+  }
+  const repository = `https://github.com/${location.owner}/${location.repo}`;
+  if (!issuer.repositories.includes(repository)) {
+    problems.push(
+      `the package's licence names the issuer at ${url}, which does not publish this plugin: its document does not list ${repository} among the repositories whose plugins it publishes.`,
+    );
+  }
+  for (const [keyId, key] of keys) {
+    if (!Object.hasOwn(issuer.keys, keyId) || issuer.keys[keyId] !== key) {
+      problems.push(
+        `the package's licence declares the key ${JSON.stringify(keyId)}, which its issuer does not publish at ${url}.`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The issuer and keys a licence declares, or why it declares none the check
+ * can read. Read here as well as by the core's schema, because a core that
+ * does not know `licence` yet passes the package.json's as it is.
+ */
+function licenceDeclaration(licence) {
+  const refuse =
+    "the package's licence is not a declaration of its issuer's `name` and `url` and its `keys`.";
+  if (
+    !isObject(licence) ||
+    !isObject(licence.issuer) ||
+    typeof licence.issuer.name !== "string" ||
+    typeof licence.issuer.url !== "string" ||
+    !isObject(licence.keys)
+  ) {
+    return refuse;
+  }
+  const keys = Object.entries(licence.keys);
+  if (keys.length === 0 || !keys.every(([, key]) => typeof key === "string")) {
+    return refuse;
+  }
+
+  const { name, url } = licence.issuer;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    parsed = undefined;
+  }
+  if (
+    parsed?.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    return `the package's licence names its issuer at ${JSON.stringify(url)}, which is not an https address.`;
+  }
+  return { name, url, keys };
+}
+
+/**
+ * An issuer's document, or why it is not one, as the end of a sentence:
+ *
+ *     {
+ *       "format": "openbrf-licence-issuer/1",
+ *       "name": "<the issuer's name>",
+ *       "keys": { "<key id>": "<base64 Ed25519 public key>" },
+ *       "repositories": ["https://github.com/<owner>/<repo>"]
+ *     }
+ *
+ * Strict, as a source record is: exactly those fields, none named twice in
+ * any object, so no reader of the same bytes sees other keys.
+ */
+function parseIssuerDocument(bytes) {
+  let text;
+  let document;
+  try {
+    text = new TextDecoder("utf8", { fatal: true }).decode(bytes);
+    document = JSON.parse(text);
+  } catch {
+    return "is not readable JSON.";
+  }
+  if (!isObject(document)) {
+    return `is not an object of the format ${ISSUER_FORMAT}.`;
+  }
+  const repeated = repeatedKey(text);
+  if (repeated !== undefined) {
+    return `names the field ${JSON.stringify(repeated)} more than once in one object.`;
+  }
+  if (
+    Object.keys(document).sort().join() !== "format,keys,name,repositories" ||
+    document.format !== ISSUER_FORMAT
+  ) {
+    return `is not of the format ${ISSUER_FORMAT}, with exactly the fields \`format\`, \`name\`, \`keys\` and \`repositories\`.`;
+  }
+  const { name, keys, repositories } = document;
+  if (
+    typeof name !== "string" ||
+    name === "" ||
+    !isObject(keys) ||
+    !Object.values(keys).every((key) => typeof key === "string") ||
+    !Array.isArray(repositories) ||
+    !repositories.every((repository) => typeof repository === "string")
+  ) {
+    return "does not state a `name`, its `keys` by key id and the `repositories` whose plugins it publishes, each as text.";
+  }
+  return { name, keys, repositories };
+}
+
+/**
+ * Why a plugin declares a key id that another plugin in the index declares
+ * with a different key, or nothing (ADR 0042), a deprecated one included,
+ * since instances still have it.
+ *
+ * A host tries a licence against every installed plugin's key with the key id
+ * the licence names, and refuses one that none of them verifies. With one key
+ * id for two keys, the board that has installed one plugin would have a
+ * licence for the other refused before it installed that one. Each listing is
+ * read with the key ids of its entry and of its package, which have to agree
+ * anyway.
+ */
+function keyIdProblems(entries, licences) {
+  const declarers = new Map();
+  for (const entry of entries) {
+    if (entry.type !== "plugin") {
+      continue;
+    }
+    const label = `${entry.type} ${entry.id} ${entry.version}`;
+    for (const licence of [entry.licence, licences.get(entry)]) {
+      const keys = isObject(licence?.keys) ? Object.entries(licence.keys) : [];
+      for (const [keyId, key] of keys) {
+        const listed = declarers.get(keyId) ?? [];
+        listed.push({ label, key });
+        declarers.set(keyId, listed);
+      }
+    }
+  }
+
+  const problems = new Set();
+  for (const [keyId, listed] of declarers) {
+    for (const { label, key } of listed) {
+      const others = [
+        ...new Set(
+          listed
+            .filter((other) => other.label !== label && other.key !== key)
+            .map((other) => other.label),
+        ),
+      ];
+      if (others.length > 0) {
+        problems.add(
+          `${label}: its licence declares the key id ${JSON.stringify(keyId)}, which ${others.join(" and ")} declares with a different key; in this index a key id names one key.`,
+        );
+      }
+    }
+  }
+  return [...problems];
 }
 
 /** JSON with object keys sorted, so equal values print equally. */
