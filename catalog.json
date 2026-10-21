@@ -1,4 +1,58 @@
 {
   "version": 1,
-  "entries": []
+  "entries": [
+    {
+      "type": "plugin",
+      "id": "occupancy",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Beläggning (exempeltillägg)",
+        "en": "Occupancy (example plugin)"
+      },
+      "description": {
+        "sv": "Referenstillägget för Open BRF: hur många lägenheter, boende och medlemmar föreningen har, och vilka lägenheter som saknar boende som tillägget kan se.",
+        "en": "The reference plugin for Open BRF: how many apartments, residents and members the association has, and which apartments have no resident the plugin can see."
+      },
+      "homepage": "https://github.com/openbrf/example-plugin",
+      "packageName": "@openbrf/example-plugin",
+      "apiVersion": 1,
+      "permissions": ["addressBook:read"],
+      "personalData": ["name", "apartment", "residency"],
+      "actions": [
+        {
+          "id": "summary",
+          "capability": "addressBook:read",
+          "effect": "read",
+          "personalData": [],
+          "surfaces": ["ui", "mcp"]
+        }
+      ],
+      "artifact": {
+        "url": "https://github.com/openbrf/example-plugin/releases/download/v0.1.0/openbrf-example-plugin-0.1.0.tgz",
+        "sha512": "sha512-uGs+ecFl7ZvGj4yDCxW6DijR55++GkaZllK3f8kDEiroqrcjqX6eLwpKC3YFD2EloVn5Mv+kCFUjm5j2nnTuNA==",
+        "bytes": 73636
+      }
+    },
+    {
+      "type": "theme",
+      "id": "example-theme",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Exempeltema",
+        "en": "Example theme"
+      },
+      "description": {
+        "sv": "Ett tema som ärver standardtemat, byter förtroendeaccenten till grönt och har en egen typsnittsfil.",
+        "en": "A theme that inherits the default and changes the trust accent to green, bundling its own typeface."
+      },
+      "homepage": "https://github.com/openbrf/example-theme",
+      "contract": "^1.0.0",
+      "extends": "porttavlan",
+      "artifact": {
+        "url": "https://github.com/openbrf/example-theme/releases/download/v0.1.0/example-theme-0.1.0.tgz",
+        "sha512": "sha512-wI0wbPu+FVGzywsaHK3/GqbMyo2xGR2FPW/qiUEl+gsHyzms6e9vZ11Q8tiqQCl+US2o0hArLpOWK9Lzq3uZJQ==",
+        "bytes": 40361
+      }
+    }
+  ]
 }
