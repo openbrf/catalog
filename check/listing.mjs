@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 
 /**
  * The checks every listing in the curated index passes before it is merged.
@@ -639,7 +640,7 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
   };
 
   const packageJson = json("package.json");
-  if (packageJson === undefined) {
+  if (!isObject(packageJson)) {
     return ["the package has no readable package.json."];
   }
 
@@ -1182,12 +1183,22 @@ function licenceDeclaration(licence) {
   } catch {
     parsed = undefined;
   }
+  // The runner fetches this address for whoever wrote it into a pull request.
+  // So it is one exact address of a named host, as a release URL is: what a
+  // problem quotes is what is fetched, and nothing reaches the runner's own
+  // network by an IP address, `localhost` or a port.
+  const host = parsed?.hostname.replace(/\.$/, "") ?? "";
   if (
-    parsed?.protocol !== "https:" ||
+    parsed?.href !== url ||
+    parsed.protocol !== "https:" ||
     parsed.username !== "" ||
-    parsed.password !== ""
+    parsed.password !== "" ||
+    parsed.port !== "" ||
+    isIP(host.replace(/^\[|\]$/g, "")) !== 0 ||
+    host === "localhost" ||
+    host.endsWith(".localhost")
   ) {
-    return `the package's licence names its issuer at ${JSON.stringify(url)}, which is not an https address.`;
+    return `the package's licence names its issuer at ${JSON.stringify(url)}, which is not a plain https address of a named host.`;
   }
   return { name, url, keys };
 }

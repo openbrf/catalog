@@ -180,10 +180,12 @@ licensed plugins name, a document of exactly this shape:
 ```
 
 `repositories` lists the repositories the issuer's plugins are released from,
-each written as the artifact URL writes it. The check reads the document at
-that `url` with a deadline and at most 64 KiB, without the GitHub token, and
-refuses a redirect rather than following it, so the document is the one the
-address answers. It refuses a listing when:
+each written as the artifact URL writes it. The `url` is an exact `https`
+address of a named host, written as a URL prints it: no credentials, port, IP
+address or `localhost`, and nothing a URL parser would rewrite. The check reads
+the document at that `url` with a deadline and at most 64 KiB, without the
+GitHub token, and refuses a redirect rather than following it, so the document
+is the one the address answers. It refuses a listing when:
 
 - the document cannot be read, is not that shape, or names a field twice in
   one object;
@@ -222,7 +224,8 @@ plugin cannot be listed.
    it and compares its manifest with the entry, checks the package's
    `source.json` against the release repository's pin, reads a licensed
    plugin's issuer document and holds the plugin's key ids to the others in the
-   index, then runs the package check or the install lint. The pull request cannot merge until it passes.
+   index, then runs the package check or the install lint. The pull request
+   cannot merge until it passes.
    The schema and checks come from the `openbrf/openbrf` commit pinned as
    `CORE_REF` in the workflow.
 3. **A person.** The check says whether a package installs, not whether it is
@@ -239,11 +242,11 @@ plugin cannot be listed.
    request. For a licensed plugin the reviewer reads its `licence.audiences`
    as they read its `permissions`: each is a grant the board consents to, a
    service the plugin may show that the association holds the licence. Each
-   one is the issuer's own service, at a domain the issuer named in
-   `licence.issuer` holds, and one the plugin needs for what its description
-   says. The reviewer also confirms that the issuer's `name` is the one that
-   holds the domain of its `url`, since the check can hold the document only to
-   what that address answers. The reviewer also checks each new pin in
+   one is the issuer's own service, at the host of `licence.issuer.url` or a
+   subdomain of it, and one the plugin needs for what its description says.
+   The reviewer confirms that the issuer's `name` is the one that holds that
+   host, since the check can hold the document only to what that address
+   answers. The reviewer also checks each new pin in
    [`repositories.json`](repositories.json) against
    `gh api repos/<owner>/<repo>`, and refuses a change to or removal of an
    existing pin that the pull request does not explain: a repository's id never

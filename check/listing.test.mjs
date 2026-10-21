@@ -988,6 +988,24 @@ describe("a listing", () => {
     assert.match(problems[0], /left-pad under dependencies/);
   });
 
+  for (const [why, packageJson] of [
+    ["the JSON literal null", "null"],
+    ["an array", "[]"],
+    ["a string", '"occupancy"'],
+  ]) {
+    it(`fails, naming the entry, when the plugin's package.json is ${why}`, async () => {
+      const bytes = pluginArchive(packageJson);
+      const entry = pluginEntry(bytes);
+      const problems = await catalogProblems(
+        { version: 1, entries: [entry] },
+        published([{ url: entry.artifact.url, bytes }]),
+      );
+      assert.deepEqual(problems, [
+        "plugin occupancy 1.0.0: the package has no readable package.json.",
+      ]);
+    });
+  }
+
   it("fails when the theme names itself differently from its entry", async () => {
     const renamed = themeArchive({ ...THEME_MANIFEST, name: "other-theme" });
     const entry = themeEntry(renamed);
@@ -1865,30 +1883,55 @@ describe("a licensed plugin", () => {
       ]);
     });
 
-    it("by its address not being https", async () => {
-      const licence = {
-        ...LICENCE,
-        issuer: {
-          ...LICENCE.issuer,
-          url: "http://licence.example.org/openbrf",
-        },
-      };
-      const asked = [];
-      const problems = await problemsOf(
-        [occupancy(licence, { mirrored: false })],
-        {},
-        { asked },
-      );
-      assert.ok(
-        problems.some((problem) =>
-          /names its issuer at "http:\/\/licence\.example\.org\/openbrf", which is not an https address\.$/.test(
-            problem,
+    for (const [why, url] of [
+      ["not being https", "http://licence.example.org/openbrf"],
+      [
+        "carrying credentials",
+        "https://user:secret@licence.example.org/openbrf",
+      ],
+      ["naming a port", "https://licence.example.org:8443/openbrf"],
+      ["being an IPv4 address", "https://192.0.2.7/openbrf"],
+      ["being an IPv6 address", "https://[2001:db8::7]/openbrf"],
+      ["naming localhost", "https://localhost/openbrf"],
+      ["naming a subdomain of localhost", "https://issuer.localhost/openbrf"],
+      ["naming localhost with a final dot", "https://localhost./openbrf"],
+      [
+        "having no path, which a URL writes with a slash",
+        "https://licence.example.org",
+      ],
+      ["holding a tab a URL drops", "https://licence.example.org/open\tbrf"],
+      [
+        "holding a newline a URL drops",
+        "https://licence.example.org/open\nbrf",
+      ],
+      [
+        "being a number a URL rewrites to an IP address",
+        "https://2130706433/openbrf",
+      ],
+      ["not being an address", "licence.example.org"],
+    ]) {
+      it(`by its address ${why}`, async () => {
+        const licence = {
+          ...LICENCE,
+          issuer: { ...LICENCE.issuer, url },
+        };
+        const asked = [];
+        const problems = await problemsOf(
+          [occupancy(licence, { mirrored: false })],
+          {},
+          { asked },
+        );
+        assert.ok(
+          problems.some(
+            (problem) =>
+              problem ===
+              `plugin occupancy 1.0.0: the package's licence names its issuer at ${JSON.stringify(url)}, which is not a plain https address of a named host.`,
           ),
-        ),
-        problems.join("\n"),
-      );
-      assert.deepEqual(asked, []);
-    });
+          problems.join("\n"),
+        );
+        assert.deepEqual(asked, []);
+      });
+    }
 
     it("by the package declaring its licence as null", async () => {
       const problems = await problemsOf(
@@ -1905,6 +1948,41 @@ describe("a licensed plugin", () => {
       );
     });
 
+    const NOT_A_DECLARATION =
+      "the package's licence is not a declaration of its issuer's `name` and `url` and its `keys`.";
+    for (const [why, licence] of [
+      ["an empty set of keys", { ...LICENCE, keys: {} }],
+      ["a key that is not text", { ...LICENCE, keys: { "example-2026-1": 7 } }],
+      ["keys that are a list", { ...LICENCE, keys: [KEY] }],
+      [
+        "an issuer name that is not text",
+        { ...LICENCE, issuer: { name: 7, url: ISSUER_URL } },
+      ],
+      [
+        "an issuer address that is not text",
+        { ...LICENCE, issuer: { name: "Example AB", url: 7 } },
+      ],
+      ["no issuer", { ...LICENCE, issuer: undefined }],
+      ["an issuer that is a list", { ...LICENCE, issuer: [] }],
+    ]) {
+      it(`by the package declaring ${why}`, async () => {
+        const asked = [];
+        const problems = await problemsOf(
+          [occupancy(licence, { mirrored: false })],
+          {},
+          { asked },
+        );
+        assert.ok(
+          problems.some(
+            (problem) =>
+              problem === `plugin occupancy 1.0.0: ${NOT_A_DECLARATION}`,
+          ),
+          problems.join("\n"),
+        );
+        assert.deepEqual(asked, []);
+      });
+    }
+
     for (const [why, document, reason] of [
       ["not JSON", "<html></html>", /is not readable JSON\.$/],
       [
@@ -1920,6 +1998,27 @@ describe("a licensed plugin", () => {
       [
         "repositories that are not text",
         { ...ISSUER, repositories: [{ url: OCCUPANCY }] },
+        /does not state a `name`/,
+      ],
+      ["an empty name", { ...ISSUER, name: "" }, /does not state a `name`/],
+      [
+        "a name that is not text",
+        { ...ISSUER, name: 7 },
+        /does not state a `name`/,
+      ],
+      [
+        "a key that is not text",
+        { ...ISSUER, keys: { "example-2026-1": 7 } },
+        /does not state a `name`/,
+      ],
+      [
+        "keys that are a list",
+        { ...ISSUER, keys: [KEY] },
+        /does not state a `name`/,
+      ],
+      [
+        "repositories that are not a list",
+        { ...ISSUER, repositories: OCCUPANCY },
         /does not state a `name`/,
       ],
       [
@@ -1967,7 +2066,7 @@ describe("a licensed plugin", () => {
   });
 
   describe("a key id another listed plugin declares", () => {
-    const OTHER_URL = "https://licence.other.example.org";
+    const OTHER_URL = "https://licence.other.example.org/openbrf";
     const otherLicence = {
       ...LICENCE,
       issuer: { name: "Other AB", url: OTHER_URL },
