@@ -43,8 +43,9 @@ A package is listed when:
   download and the release asset;
 - the package agrees with the entry: for a plugin the package name, version,
   id, API version, permissions, personal data categories, actions, protected
-  resource and recipients (each one's id, origin, purpose and categories, the
-  board reading the entry's before anything is downloaded); for a theme the
+  resource, recipients (each one's id, origin, purpose and categories, the
+  board reading the entry's before anything is downloaded) and whether it is an
+  AI package; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
   the theme is too;
