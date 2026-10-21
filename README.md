@@ -189,6 +189,9 @@ is the one the address answers. It refuses a listing when:
 
 - the document cannot be read, is not that shape, or names a field twice in
   one object;
+- the plugin's `licence` is not a declaration of an issuer `name` and `url`
+  and a `keys` object: one that declares no key, or a key that is not text, is
+  refused;
 - its `name` is not, exactly, the issuer's name in the plugin's `licence`;
 - it does not list the repository the listing is released from, compared
   exactly: that issuer does not publish this plugin;
