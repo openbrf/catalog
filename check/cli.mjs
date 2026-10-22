@@ -17,7 +17,7 @@
  * `gh attestation verify`.
  */
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -34,6 +34,15 @@ const run = promisify(execFile);
 
 /** The index files this repository publishes, one for each index version. */
 const INDEX_FILES = ["catalog.json", "catalog-v2.json"];
+
+/** The index version each of those files must carry. */
+const INDEX_VERSIONS = new Map([
+  ["catalog.json", 1],
+  ["catalog-v2.json", 2],
+]);
+
+/** The most bytes read of an index file or of the repositories file. */
+const MAX_JSON_BYTES = 1024 * 1024;
 
 const args = process.argv.slice(2);
 const pinsFlag = args.indexOf("--pins");
@@ -252,7 +261,18 @@ async function issuerDocumentAt(url, maxBytes) {
   return readAtMost(response, url, maxBytes);
 }
 
-const pins = parseRepositoryPins(JSON.parse(await readFile(pinsPath, "utf8")));
+/** A JSON file, refused before it is read when it is over `MAX_JSON_BYTES`. */
+async function readJson(path) {
+  const { size } = await stat(path);
+  if (size > MAX_JSON_BYTES) {
+    throw new Error(
+      `${path} is over the ${String(MAX_JSON_BYTES)} byte limit.`,
+    );
+  }
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+const pins = parseRepositoryPins(await readJson(pinsPath));
 if (!pins.ok) {
   console.error(`${pinsPath} is not a list of repositories:\n`);
   for (const issue of pins.issues) {
@@ -262,7 +282,17 @@ if (!pins.ok) {
 }
 
 for (const indexPath of indexPaths) {
-  const index = JSON.parse(await readFile(indexPath, "utf8"));
+  const index = await readJson(indexPath);
+  // Each file this repository publishes is the one an instance of its version
+  // reads, so the other version in it is refused whatever the schema accepts.
+  const version = INDEX_VERSIONS.get(basename(indexPath));
+  if (version !== undefined && index?.version !== version) {
+    console.error(
+      `${indexPath} must be an index of version ${String(version)}.`,
+    );
+    process.exitCode = 1;
+    continue;
+  }
   const problems = await catalogProblems(index, {
     indexName: basename(indexPath),
     repositoryPins: pins.pins,

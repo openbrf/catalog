@@ -277,6 +277,16 @@ describe("the index files in this repository", () => {
       assert.deepEqual(v2.get(entry.id), entry, `${entry.id}`);
     }
   });
+
+  it("catalog-v2.json lists nothing else unless it needs version 2", () => {
+    const v1 = new Map(read("catalog.json").entries.map((e) => [e.id, e]));
+    for (const entry of read("catalog-v2.json").entries) {
+      if ("deviceRoutes" in entry) {
+        continue;
+      }
+      assert.deepEqual(v1.get(entry.id), entry, `${entry.id}`);
+    }
+  });
 });
 
 describe("an index of version 1", () => {
