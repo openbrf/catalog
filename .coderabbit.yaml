@@ -75,6 +75,24 @@ reviews:
     docstrings:
       mode: "off"
 
+  # Every finishing touch has CodeRabbit push commits or open pull requests in
+  # this repository, and chat answers accounts outside the organisation (see
+  # `chat` below). All of them stay off, so only maintainers put code on a
+  # branch here.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
   path_filters:
     - "!**/node_modules/**"
     # The core checkout the workflow and a local run put here.
@@ -229,9 +247,12 @@ reviews:
 
 chat:
   auto_reply: true
-  # Listings are proposed by pull request, but the conversation about one is
-  # the maintainers' to have, not the bot's.
-  allow_non_org_members: false
+  # Accounts outside the organisation are answered too, so whoever proposes a
+  # listing can ask for a review of their pull request with
+  # `@coderabbitai review`. Automatic reviews do not depend on this setting.
+  # The finishing touches are off (see `reviews.finishing_touches`), so no
+  # comment can make CodeRabbit write code here.
+  allow_non_org_members: true
 
 knowledge_base:
   code_guidelines:
