@@ -302,7 +302,14 @@ async function readJson(path) {
   }
 }
 
-const pins = parseRepositoryPins(await readJson(pinsPath));
+let pinsFile;
+try {
+  pinsFile = await readJson(pinsPath);
+} catch (error) {
+  console.error(`${pinsPath} cannot be read: ${error.message}`);
+  process.exit(1);
+}
+const pins = parseRepositoryPins(pinsFile);
 if (!pins.ok) {
   console.error(`${pinsPath} is not a list of repositories:\n`);
   for (const issue of pins.issues) {
@@ -312,7 +319,14 @@ if (!pins.ok) {
 }
 
 for (const indexPath of indexPaths) {
-  const index = await readJson(indexPath);
+  let index;
+  try {
+    index = await readJson(indexPath);
+  } catch (error) {
+    console.error(`${indexPath} cannot be read: ${error.message}`);
+    process.exitCode = 1;
+    continue;
+  }
   // Each file this repository publishes is the one an instance of its version
   // reads, so the other version in it is refused whatever the schema accepts.
   const version = INDEX_VERSIONS.get(basename(indexPath));
