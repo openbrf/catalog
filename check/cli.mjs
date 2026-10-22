@@ -1,12 +1,15 @@
 /**
- * Checks catalog.json against every rule a listing must meet, over the
+ * Checks the catalog's index files, catalog.json (index version 1) and
+ * catalog-v2.json (version 2), against every rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
  * attestation, whether the commits that attestation names are on the
  * repository's default branch, for a release-only listing whether the source
  * it names is public and what its release repository pins, and for a licensed
  * plugin what its issuer publishes.
  *
- *   node check/cli.mjs [catalog.json [repositories.json]]
+ *   node check/cli.mjs [--pins repositories.json] [index.json ...]
+ *
+ * With no index named, both catalog.json and catalog-v2.json are checked.
  *
  * Reads the index schema and the package checks from a checkout of
  * openbrf/openbrf with its plugin-sdk and theme-tools built, at `.core` or
@@ -16,7 +19,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { defaultBranchChecker } from "./branch.mjs";
@@ -29,8 +32,23 @@ import {
 
 const run = promisify(execFile);
 
-const catalogPath = resolve(process.argv[2] ?? "catalog.json");
-const pinsPath = resolve(process.argv[3] ?? "repositories.json");
+/** The index files this repository publishes, one for each index version. */
+const INDEX_FILES = ["catalog.json", "catalog-v2.json"];
+
+const args = process.argv.slice(2);
+const pinsFlag = args.indexOf("--pins");
+const pinsArgument = pinsFlag === -1 ? undefined : args[pinsFlag + 1];
+if (pinsFlag !== -1) {
+  if (pinsArgument === undefined) {
+    console.error("--pins needs the path of the repositories file.");
+    process.exit(2);
+  }
+  args.splice(pinsFlag, 2);
+}
+const pinsPath = resolve(pinsArgument ?? "repositories.json");
+const indexPaths = (args.length === 0 ? INDEX_FILES : args).map((path) =>
+  resolve(path),
+);
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined;
 
 /** How long `gh attestation verify` may run. */
@@ -234,7 +252,6 @@ async function issuerDocumentAt(url, maxBytes) {
   return readAtMost(response, url, maxBytes);
 }
 
-const index = JSON.parse(await readFile(catalogPath, "utf8"));
 const pins = parseRepositoryPins(JSON.parse(await readFile(pinsPath, "utf8")));
 if (!pins.ok) {
   console.error(`${pinsPath} is not a list of repositories:\n`);
@@ -243,28 +260,33 @@ if (!pins.ok) {
   }
   process.exit(1);
 }
-const problems = await catalogProblems(index, {
-  repositoryPins: pins.pins,
-  sdk,
-  themeTools,
-  releaseOf,
-  fetchArtifact,
-  verifyAttestation,
-  defaultBranchHas,
-  repositoryIsPublic,
-  sourcePinAt,
-  issuerDocumentAt,
-});
 
-if (problems.length > 0) {
-  console.error(`${catalogPath} does not pass the listing checks:\n`);
-  for (const problem of problems) {
-    console.error(`  - ${problem}`);
+for (const indexPath of indexPaths) {
+  const index = JSON.parse(await readFile(indexPath, "utf8"));
+  const problems = await catalogProblems(index, {
+    indexName: basename(indexPath),
+    repositoryPins: pins.pins,
+    sdk,
+    themeTools,
+    releaseOf,
+    fetchArtifact,
+    verifyAttestation,
+    defaultBranchHas,
+    repositoryIsPublic,
+    sourcePinAt,
+    issuerDocumentAt,
+  });
+
+  if (problems.length > 0) {
+    console.error(`${indexPath} does not pass the listing checks:\n`);
+    for (const problem of problems) {
+      console.error(`  - ${problem}`);
+    }
+    process.exitCode = 1;
+  } else {
+    const count = index.entries.length;
+    console.log(
+      `${indexPath}: ${String(count)} ${count === 1 ? "entry passes" : "entries pass"} the listing checks.`,
+    );
   }
-  process.exitCode = 1;
-} else {
-  const count = index.entries.length;
-  console.log(
-    `${catalogPath}: ${String(count)} ${count === 1 ? "entry passes" : "entries pass"} the listing checks.`,
-  );
 }

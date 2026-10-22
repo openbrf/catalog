@@ -1,9 +1,10 @@
 name: Check
 
-# Every instance reads catalog.json from main and offers what it lists, so
-# every change to it passes the listing checks before it merges. The nightly
-# run catches a listing that stopped passing after it merged: a release taken
-# down, an artifact that no longer matches.
+# Every instance reads catalog.json (or catalog-v2.json, from an instance that
+# reads index version 2) from main and offers what it lists, so every change to
+# either passes the listing checks before it merges. The nightly run catches a
+# listing that stopped passing after it merged: a release taken down, an
+# artifact that no longer matches.
 on:
   pull_request:
   push:
@@ -25,7 +26,7 @@ env:
   # The openbrf/openbrf commit whose index schema and package checks the
   # listings are held to. Moved on purpose, in a reviewed change, when the
   # contract changes.
-  CORE_REF: 808311eef7ca1c8ed55af6f4102274a8ccff6c31
+  CORE_REF: a050e5b50a49b5881666fe97babd8715f64d26cc
 
 jobs:
   listings:
@@ -64,7 +65,7 @@ jobs:
       - name: Test the checks
         run: node --test check/
 
-      - name: Check catalog.json
+      - name: Check catalog.json and catalog-v2.json
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node check/cli.mjs catalog.json
+        run: node check/cli.mjs

@@ -248,11 +248,100 @@ const theme = themeArchive(THEME_MANIFEST);
 const pluginFile = { url: pluginEntry(plugin).artifact.url, bytes: plugin };
 const themeFile = { url: themeEntry(theme).artifact.url, bytes: theme };
 
-describe("catalog.json in this repository", () => {
-  it("is an index the instance reads", () => {
-    const index = JSON.parse(readFileSync("catalog.json", "utf8"));
+describe("the index files in this repository", () => {
+  const read = (file) => JSON.parse(readFileSync(file, "utf8"));
+
+  it("catalog.json is an index of version 1 the instance reads", () => {
+    const index = read("catalog.json");
+    assert.equal(index.version, 1);
     const parsed = sdk.parseCatalogIndex(index);
     assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
+  it("catalog-v2.json is an index of version 2 the instance reads", () => {
+    const index = read("catalog-v2.json");
+    assert.equal(index.version, 2);
+    const parsed = sdk.parseCatalogIndex(index);
+    assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
+  it("catalog.json carries nothing that needs version 2", () => {
+    for (const entry of read("catalog.json").entries) {
+      assert.equal("deviceRoutes" in entry, false, `${entry.id}`);
+    }
+  });
+
+  it("catalog-v2.json lists every entry of catalog.json, the same", () => {
+    const v2 = new Map(read("catalog-v2.json").entries.map((e) => [e.id, e]));
+    for (const entry of read("catalog.json").entries) {
+      assert.deepEqual(v2.get(entry.id), entry, `${entry.id}`);
+    }
+  });
+});
+
+describe("an index of version 1", () => {
+  const deviceRoutes = [{ id: "screen", path: "screen" }];
+  // A device is a screen anyone passing reads, so the plugin reads no register.
+  const overrides = { permissions: [], personalData: [], deviceRoutes };
+  const bytes = pluginArchive({
+    ...PLUGIN_PACKAGE,
+    openbrf: { ...PLUGIN_PACKAGE.openbrf, permissions: [], personalData: [] },
+  });
+
+  it("is refused when an entry carries deviceRoutes", async () => {
+    const entry = pluginEntry(bytes, overrides);
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      {
+        ...published([{ url: entry.artifact.url, bytes }]),
+        indexName: "catalog.json",
+      },
+    );
+    assert.deepEqual(problems, [
+      "catalog.json: entries.0.deviceRoutes: deviceRoutes needs version 2 of the index",
+    ]);
+  });
+
+  it("is refused when deviceRoutes is empty", async () => {
+    const entry = pluginEntry(bytes, { ...overrides, deviceRoutes: [] });
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+    assert.ok(problems.length > 0);
+    assert.ok(problems.every((problem) => /deviceRoutes/.test(problem)));
+  });
+
+  it("is refused under the name of the file it was read from", async () => {
+    const problems = await catalogProblems(
+      { version: 3, entries: [] },
+      { ...published([]), indexName: "catalog-v2.json" },
+    );
+    assert.ok(problems.length > 0);
+    assert.ok(
+      problems.every((problem) => problem.startsWith("catalog-v2.json:")),
+    );
+  });
+});
+
+describe("an index of version 2", () => {
+  it("passes with the listing the version 1 index has", async () => {
+    const problems = await catalogProblems(
+      { version: 2, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      published([pluginFile, themeFile]),
+    );
+    assert.deepEqual(problems, []);
+  });
+
+  it("is held to the same listing rules", async () => {
+    const entry = pluginEntry(plugin);
+    entry.artifact.sha512 = sri(encode("something else"));
+    const problems = await catalogProblems(
+      { version: 2, entries: [entry] },
+      published([pluginFile]),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /states sha512-.*, the artifact is sha512-/);
   });
 });
 
