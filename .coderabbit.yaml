@@ -110,10 +110,12 @@ reviews:
         Review what the check cannot see.
 
         For a plugin, compare the entry's permissions, personal data
-        categories, actions and recipients with what the plugin plausibly
-        needs for the purpose its description states, and flag a declaration
-        broader than that purpose. The board consents to exactly this
-        declaration before anything is downloaded.
+        categories, actions, recipients and, for a licensed plugin, its
+        licence audiences with what the plugin plausibly needs for the purpose
+        its description states, and flag a declaration broader than that
+        purpose. The board consents to exactly this declaration before
+        anything is downloaded. Flag a licence audience that is not a service
+        of the issuer the licence names.
 
         The name and description are the curator's text and must be given in
         both Swedish and English. Flag one that is missing a language, or one

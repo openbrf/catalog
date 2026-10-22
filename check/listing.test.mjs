@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 
 import { sdk, themeTools } from "./core.mjs";
 import {
+  ISSUER_FORMAT,
   RELEASE_WORKFLOW,
   SOURCE_FILE,
   catalogProblems,
@@ -135,12 +136,16 @@ function themeEntry(bytes, overrides = {}) {
  * is not mistaken for another's.
  */
 const PINS = Object.fromEntries(
-  ["openbrf-occupancy", "example-theme", "child-theme", "grandchild-theme"].map(
-    (repo, index) => [
-      `example/${repo}`,
-      { id: String(1000 + index), ownerId: "42" },
-    ],
-  ),
+  [
+    "openbrf-occupancy",
+    "example-theme",
+    "child-theme",
+    "grandchild-theme",
+    "openbrf-other",
+  ].map((repo, index) => [
+    `example/${repo}`,
+    { id: String(1000 + index), ownerId: "42" },
+  ]),
 );
 
 /** The commit every fixture attestation names unless a test says otherwise. */
@@ -983,6 +988,24 @@ describe("a listing", () => {
     assert.match(problems[0], /left-pad under dependencies/);
   });
 
+  for (const [why, packageJson] of [
+    ["the JSON literal null", "null"],
+    ["an array", "[]"],
+    ["a string", '"occupancy"'],
+  ]) {
+    it(`fails, naming the entry, when the plugin's package.json is ${why}`, async () => {
+      const bytes = pluginArchive(packageJson);
+      const entry = pluginEntry(bytes);
+      const problems = await catalogProblems(
+        { version: 1, entries: [entry] },
+        published([{ url: entry.artifact.url, bytes }]),
+      );
+      assert.deepEqual(problems, [
+        "plugin occupancy 1.0.0: the package has no readable package.json.",
+      ]);
+    });
+  }
+
   it("fails when the theme names itself differently from its entry", async () => {
     const renamed = themeArchive({ ...THEME_MANIFEST, name: "other-theme" });
     const entry = themeEntry(renamed);
@@ -1648,6 +1671,456 @@ describe("a listing from a release-only repository", () => {
       problems[0],
       /^theme example-theme 1\.0\.0: .*"main", which is not a full commit id/,
     );
+  });
+});
+
+describe("a licensed plugin", () => {
+  const KEY = `${"A".repeat(42)}A=`;
+  const OTHER_KEY = `${"B".repeat(42)}A=`;
+  const ISSUER_URL = "https://licence.example.org/openbrf";
+  const LICENCE = {
+    entitlement: "occupancy-plus",
+    issuer: { name: "Example AB", url: ISSUER_URL },
+    keys: { "example-2026-1": KEY },
+    audiences: ["https://service.example.org"],
+  };
+  const RELEASED = "2026-10-01";
+  const OCCUPANCY = "https://github.com/example/openbrf-occupancy";
+  /** What the issuer publishes at its address unless a test says otherwise. */
+  const ISSUER = {
+    format: ISSUER_FORMAT,
+    name: "Example AB",
+    keys: { "example-2026-1": KEY },
+    repositories: [OCCUPANCY],
+  };
+
+  // A core older than the catalog's `licence` refuses an entry carrying one,
+  // so until CORE_REF moves past it the entry leaves it out and is refused
+  // for that alone. The rules below hold either way.
+  const knowsCatalogLicence = sdk.parseCatalogIndex({
+    version: 1,
+    entries: [pluginEntry(plugin, { licence: LICENCE, released: RELEASED })],
+  }).ok;
+  const UNMIRRORED =
+    /^plugin [a-z-]+ 1\.0\.0: the entry's (licence|release date) is null, the package's is /;
+
+  const licensedPackage = (licence, overrides = {}) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      ...overrides,
+      openbrf: {
+        ...PLUGIN_PACKAGE.openbrf,
+        ...overrides.openbrf,
+        licence,
+        released: RELEASED,
+      },
+    });
+
+  /** The entry for a licensed package, carrying the licence where it can. */
+  function licensedEntry(bytes, licence, overrides = {}) {
+    return pluginEntry(bytes, {
+      ...(knowsCatalogLicence ? { licence, released: RELEASED } : {}),
+      ...overrides,
+    });
+  }
+
+  /** A second plugin, from a repository of its own. */
+  const OTHER = "https://github.com/example/openbrf-other";
+  function otherPlugin(licence) {
+    const bytes = licensedPackage(licence, {
+      name: "@example/openbrf-other",
+      openbrf: { id: "other" },
+    });
+    const entry = licensedEntry(bytes, licence, {
+      id: "other",
+      packageName: "@example/openbrf-other",
+      artifact: {
+        url: releaseUrl("openbrf-other", "1.0.0", "other-1.0.0.tgz"),
+        sha512: sri(bytes),
+        bytes: bytes.byteLength,
+      },
+    });
+    return { entry, file: { url: entry.artifact.url, bytes } };
+  }
+
+  /**
+   * The problems with the listed plugins, with each address answering what
+   * `issuers` maps it to and every other refusing. `options.asked` collects
+   * the addresses asked.
+   */
+  async function problemsOf(listed, issuers, options = {}) {
+    const deps = published(listed.map(({ file }) => file));
+    deps.issuerDocumentAt = async (url) => {
+      options.asked?.push(url);
+      const answer = issuers[url];
+      if (answer === undefined) {
+        throw new Error(`${url} answered 404.`);
+      }
+      return encode(answer);
+    };
+    const problems = await catalogProblems(
+      { version: 1, entries: listed.map(({ entry }) => entry) },
+      deps,
+    );
+    return knowsCatalogLicence
+      ? problems
+      : problems.filter((problem) => !UNMIRRORED.test(problem));
+  }
+
+  /**
+   * The plugin listed with `licence`. Unmirrored, its entry leaves the licence
+   * out, as a core older than the catalog's `licence` reads it, so that a
+   * declaration the index schema would refuse reaches the package's checks.
+   */
+  function occupancy(licence = LICENCE, { mirrored = true } = {}) {
+    const bytes = licensedPackage(licence);
+    const entry = mirrored ? licensedEntry(bytes, licence) : pluginEntry(bytes);
+    return { entry, file: { url: entry.artifact.url, bytes } };
+  }
+
+  it("passes when its issuer publishes the plugin and the keys it declares", async () => {
+    assert.deepEqual(
+      await problemsOf([occupancy()], { [ISSUER_URL]: ISSUER }),
+      [],
+    );
+  });
+
+  it("passes when the issuer publishes more keys and plugins than this one", async () => {
+    const wider = {
+      ...ISSUER,
+      keys: { "example-2025-1": OTHER_KEY, "example-2026-1": KEY },
+      repositories: [OTHER, OCCUPANCY],
+    };
+    assert.deepEqual(
+      await problemsOf([occupancy()], { [ISSUER_URL]: wider }),
+      [],
+    );
+  });
+
+  it("fails when the entry says nothing of the licence the package reads", async () => {
+    // So the board is never asked to consent to a plugin whose licence and
+    // audiences the consent screen cannot show.
+    const bytes = licensedPackage(LICENCE);
+    const entry = pluginEntry(bytes);
+    const deps = published([{ url: entry.artifact.url, bytes }]);
+    deps.issuerDocumentAt = async () => encode(ISSUER);
+    const problems = await catalogProblems(
+      { version: 1, entries: [entry] },
+      deps,
+    );
+    assert.equal(problems.length, 2, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's licence is null, the package's is \{/,
+    );
+    assert.match(
+      problems[1],
+      /the entry's release date is null, the package's is "2026-10-01"\.$/,
+    );
+  });
+
+  it(
+    "fails when the entry declares other audiences than the package",
+    { skip: !knowsCatalogLicence },
+    async () => {
+      const bytes = licensedPackage(LICENCE);
+      const entry = licensedEntry(bytes, {
+        ...LICENCE,
+        audiences: ["https://other.example.org"],
+      });
+      const problems = await problemsOf(
+        [{ entry, file: { url: entry.artifact.url, bytes } }],
+        {
+          [ISSUER_URL]: ISSUER,
+        },
+      );
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /the entry's licence is .*other\.example\.org.*, the package's is .*service\.example\.org/,
+      );
+    },
+  );
+
+  describe("fails when the issuer it names does not publish the plugin", () => {
+    it("by its document not listing the plugin's repository", async () => {
+      const problems = await problemsOf([occupancy()], {
+        [ISSUER_URL]: { ...ISSUER, repositories: [OTHER] },
+      });
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the package's licence names the issuer at ${ISSUER_URL}, which does not publish this plugin: its document does not list ${OCCUPANCY} among the repositories whose plugins it publishes.`,
+      ]);
+    });
+
+    it("by its document listing the repository under another spelling", async () => {
+      const problems = await problemsOf([occupancy()], {
+        [ISSUER_URL]: {
+          ...ISSUER,
+          repositories: [
+            `${OCCUPANCY}.git`,
+            `${OCCUPANCY}/`,
+            OCCUPANCY.toUpperCase(),
+          ],
+        },
+      });
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(problems[0], /which does not publish this plugin/);
+    });
+
+    it("by the package naming the issuer otherwise than the issuer does", async () => {
+      const problems = await problemsOf([occupancy()], {
+        [ISSUER_URL]: { ...ISSUER, name: "Other AB" },
+      });
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the package's licence names its issuer "Example AB", and the issuer's document at ${ISSUER_URL} names it "Other AB".`,
+      ]);
+    });
+
+    it("by nothing answering at its address", async () => {
+      const problems = await problemsOf([occupancy()], {});
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the document of the licence's issuer at ${ISSUER_URL} could not be read: ${ISSUER_URL} answered 404.`,
+      ]);
+    });
+
+    for (const [why, url] of [
+      ["not being https", "http://licence.example.org/openbrf"],
+      [
+        "carrying credentials",
+        "https://user:secret@licence.example.org/openbrf",
+      ],
+      ["naming a port", "https://licence.example.org:8443/openbrf"],
+      ["being an IPv4 address", "https://192.0.2.7/openbrf"],
+      ["being an IPv6 address", "https://[2001:db8::7]/openbrf"],
+      ["naming localhost", "https://localhost/openbrf"],
+      ["naming a subdomain of localhost", "https://issuer.localhost/openbrf"],
+      ["naming localhost with a final dot", "https://localhost./openbrf"],
+      [
+        "having no path, which a URL writes with a slash",
+        "https://licence.example.org",
+      ],
+      ["holding a tab a URL drops", "https://licence.example.org/open\tbrf"],
+      [
+        "holding a newline a URL drops",
+        "https://licence.example.org/open\nbrf",
+      ],
+      [
+        "being a number a URL rewrites to an IP address",
+        "https://2130706433/openbrf",
+      ],
+      ["not being an address", "licence.example.org"],
+    ]) {
+      it(`by its address ${why}`, async () => {
+        const licence = {
+          ...LICENCE,
+          issuer: { ...LICENCE.issuer, url },
+        };
+        const asked = [];
+        const problems = await problemsOf(
+          [occupancy(licence, { mirrored: false })],
+          {},
+          { asked },
+        );
+        assert.ok(
+          problems.some(
+            (problem) =>
+              problem ===
+              `plugin occupancy 1.0.0: the package's licence names its issuer at ${JSON.stringify(url)}, which is not a plain https address of a named host.`,
+          ),
+          problems.join("\n"),
+        );
+        assert.deepEqual(asked, []);
+      });
+    }
+
+    it("by the package declaring its licence as null", async () => {
+      const problems = await problemsOf(
+        [occupancy(null, { mirrored: false })],
+        {},
+      );
+      assert.ok(
+        problems.some((problem) =>
+          /the package's licence is not a declaration of its issuer's `name` and `url` and its `keys`\.$/.test(
+            problem,
+          ),
+        ),
+        problems.join("\n"),
+      );
+    });
+
+    const NOT_A_DECLARATION =
+      "the package's licence is not a declaration of its issuer's `name` and `url` and its `keys`.";
+    for (const [why, licence] of [
+      ["an empty set of keys", { ...LICENCE, keys: {} }],
+      ["a key that is not text", { ...LICENCE, keys: { "example-2026-1": 7 } }],
+      ["keys that are a list", { ...LICENCE, keys: [KEY] }],
+      [
+        "an issuer name that is not text",
+        { ...LICENCE, issuer: { name: 7, url: ISSUER_URL } },
+      ],
+      [
+        "an issuer address that is not text",
+        { ...LICENCE, issuer: { name: "Example AB", url: 7 } },
+      ],
+      ["no issuer", { ...LICENCE, issuer: undefined }],
+      ["an issuer that is a list", { ...LICENCE, issuer: [] }],
+    ]) {
+      it(`by the package declaring ${why}`, async () => {
+        const asked = [];
+        const problems = await problemsOf(
+          [occupancy(licence, { mirrored: false })],
+          {},
+          { asked },
+        );
+        assert.ok(
+          problems.some(
+            (problem) =>
+              problem === `plugin occupancy 1.0.0: ${NOT_A_DECLARATION}`,
+          ),
+          problems.join("\n"),
+        );
+        assert.deepEqual(asked, []);
+      });
+    }
+
+    for (const [why, document, reason] of [
+      ["not JSON", "<html></html>", /is not readable JSON\.$/],
+      [
+        "another format",
+        { ...ISSUER, format: "openbrf-licence-issuer/2" },
+        /is not of the format openbrf-licence-issuer\/1/,
+      ],
+      [
+        "a field it does not define",
+        { ...ISSUER, plugins: [OCCUPANCY] },
+        /is not of the format openbrf-licence-issuer\/1/,
+      ],
+      [
+        "repositories that are not text",
+        { ...ISSUER, repositories: [{ url: OCCUPANCY }] },
+        /does not state a `name`/,
+      ],
+      ["an empty name", { ...ISSUER, name: "" }, /does not state a `name`/],
+      [
+        "a name that is not text",
+        { ...ISSUER, name: 7 },
+        /does not state a `name`/,
+      ],
+      [
+        "a key that is not text",
+        { ...ISSUER, keys: { "example-2026-1": 7 } },
+        /does not state a `name`/,
+      ],
+      [
+        "keys that are a list",
+        { ...ISSUER, keys: [KEY] },
+        /does not state a `name`/,
+      ],
+      [
+        "repositories that are not a list",
+        { ...ISSUER, repositories: OCCUPANCY },
+        /does not state a `name`/,
+      ],
+      [
+        "a key id named twice",
+        `{"format": "${ISSUER_FORMAT}", "name": "Example AB", "keys": {"example-2026-1": "${OTHER_KEY}", "example-2026-1": "${KEY}"}, "repositories": ["${OCCUPANCY}"]}`,
+        /names the field "example-2026-1" more than once in one object\.$/,
+      ],
+    ]) {
+      it(`by a document with ${why}`, async () => {
+        const problems = await problemsOf([occupancy()], {
+          [ISSUER_URL]: document,
+        });
+        assert.equal(problems.length, 1, problems.join("\n"));
+        assert.match(
+          problems[0],
+          /^plugin occupancy 1\.0\.0: the document of the licence's issuer at /,
+        );
+        assert.match(problems[0], reason);
+      });
+    }
+  });
+
+  describe("fails when it declares a key its issuer does not publish", () => {
+    it("under that key id", async () => {
+      const problems = await problemsOf([occupancy()], {
+        [ISSUER_URL]: { ...ISSUER, keys: { "example-2026-1": OTHER_KEY } },
+      });
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the package's licence declares the key "example-2026-1", which its issuer does not publish at ${ISSUER_URL}.`,
+      ]);
+    });
+
+    it("under any key id", async () => {
+      const licence = {
+        ...LICENCE,
+        keys: { "example-2026-1": KEY, "example-2027-1": OTHER_KEY },
+      };
+      const problems = await problemsOf([occupancy(licence)], {
+        [ISSUER_URL]: ISSUER,
+      });
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the package's licence declares the key "example-2027-1", which its issuer does not publish at ${ISSUER_URL}.`,
+      ]);
+    });
+  });
+
+  describe("a key id another listed plugin declares", () => {
+    const OTHER_URL = "https://licence.other.example.org/openbrf";
+    const otherLicence = {
+      ...LICENCE,
+      issuer: { name: "Other AB", url: OTHER_URL },
+      keys: { "example-2026-1": OTHER_KEY },
+    };
+
+    it("fails both plugins when the other declares it with a different key", async () => {
+      const problems = await problemsOf(
+        [occupancy(), otherPlugin(otherLicence)],
+        {
+          [ISSUER_URL]: ISSUER,
+          [OTHER_URL]: {
+            ...ISSUER,
+            name: "Other AB",
+            keys: { "example-2026-1": OTHER_KEY },
+            repositories: [OTHER],
+          },
+        },
+      );
+      assert.deepEqual(problems, [
+        'plugin occupancy 1.0.0: its licence declares the key id "example-2026-1", which plugin other 1.0.0 declares with a different key; in this index a key id names one key.',
+        'plugin other 1.0.0: its licence declares the key id "example-2026-1", which plugin occupancy 1.0.0 declares with a different key; in this index a key id names one key.',
+      ]);
+    });
+
+    it("fails when the other is deprecated, since instances still have it", async () => {
+      const other = otherPlugin(otherLicence);
+      other.entry.deprecated = true;
+      const problems = await problemsOf([occupancy(), other], {
+        [ISSUER_URL]: ISSUER,
+        [OTHER_URL]: {
+          ...ISSUER,
+          name: "Other AB",
+          keys: { "example-2026-1": OTHER_KEY },
+          repositories: [OTHER],
+        },
+      });
+      assert.equal(problems.length, 2, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /^plugin occupancy 1\.0\.0: .*which plugin other 1\.0\.0 declares with a different key/,
+      );
+    });
+
+    it("passes when the other declares it with the same key, asking the issuer once", async () => {
+      const asked = [];
+      const problems = await problemsOf(
+        [occupancy(), otherPlugin(LICENCE)],
+        { [ISSUER_URL]: { ...ISSUER, repositories: [OCCUPANCY, OTHER] } },
+        { asked },
+      );
+      assert.deepEqual(problems, []);
+      assert.deepEqual(asked, [ISSUER_URL]);
+    });
   });
 });
 

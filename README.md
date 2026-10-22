@@ -44,8 +44,8 @@ A package is listed when:
 - the package agrees with the entry: for a plugin the package name, version,
   id, API version, permissions, personal data categories, actions, protected
   resource, recipients (each one's id, origin, purpose and categories, the
-  board reading the entry's before anything is downloaded) and whether it is an
-  AI package; for a theme the
+  board reading the entry's before anything is downloaded), whether it is an
+  AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
   the theme is too;
@@ -55,6 +55,10 @@ A package is listed when:
   segment and no backslash. The check reads a plugin with the same strict
   reader an instance reads a theme with, so a plugin outside these limits is
   not listed;
+- a plugin that reads a licence names an issuer that publishes it, declares
+  only keys that issuer publishes, and declares no key id that another plugin
+  in this index declares with a different key (see
+  [A licensed plugin](#a-licensed-plugin));
 - a plugin declares no runtime dependencies and passes `pluginPackageProblems`
   from `@openbrf/plugin-sdk`; a theme passes the install lint from
   `@openbrf/theme-tools`;
@@ -155,6 +159,55 @@ maintainer also checks that the release repository:
 The credential is never in the package or the release, and neither the catalog
 nor an instance needs one.
 
+### A licensed plugin
+
+A paid plugin declares the instance licence it reads in its manifest's
+`licence`: one entitlement, its issuer's `name` and `url`, the issuer's public
+keys by key id, and the `audiences`, the issuer's services it may present the
+association's licence to
+([ADR 0042](https://github.com/openbrf/openbrf/blob/main/docs/adr/0042-a-signed-licence-per-instance-verified-offline.md)).
+The plugin reads only the licences its keys verify, so the catalog vouches for
+those keys with the issuer's own word. The issuer publishes, at the `url` its
+licensed plugins name, a document of exactly this shape:
+
+```json
+{
+  "format": "openbrf-licence-issuer/1",
+  "name": "<the issuer's name>",
+  "keys": { "<key id>": "<base64 of the 32-byte Ed25519 public key>" },
+  "repositories": ["https://github.com/<owner>/<repo>"]
+}
+```
+
+`repositories` lists the repositories the issuer's plugins are released from,
+each written as the artifact URL writes it. The `url` is an exact `https`
+address of a named host, written as a URL prints it: no credentials, port, IP
+address or `localhost`, and nothing a URL parser would rewrite. The check reads
+the document at that `url` with a deadline and at most 64 KiB, without the
+GitHub token, and refuses a redirect rather than following it, so the document
+is the one the address answers. It refuses a listing when:
+
+- the document cannot be read, is not that shape, or names a field twice in
+  one object;
+- the plugin's `licence` is not a declaration of an issuer `name` and `url`
+  and a `keys` object: one that declares no key, or a key that is not text, is
+  refused;
+- its `name` is not, exactly, the issuer's name in the plugin's `licence`;
+- it does not list the repository the listing is released from, compared
+  exactly: that issuer does not publish this plugin;
+- a key in the plugin's `licence.keys` is not in its `keys` under the same key
+  id;
+- another plugin in this index, a deprecated one included, declares one of the
+  plugin's key ids with a different key. A host tries a licence against every
+  installed plugin's key with the key id the licence names and refuses one that
+  none of them verifies, so a board that installed one of the two would have a
+  licence for the other refused.
+
+An entry repeats the plugin's `licence` and `released`, since the board
+consents to the licence before anything is downloaded. Until `CORE_REF` names a
+core whose index schema reads them, an entry cannot carry them, so a licensed
+plugin cannot be listed.
+
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
@@ -172,8 +225,10 @@ nor an instance needs one.
    and size, verifies its attestation and compares its certificate's claims,
    asks GitHub whether the attested commits are on the default branch, unpacks
    it and compares its manifest with the entry, checks the package's
-   `source.json` against the release repository's pin, then runs the package
-   check or the install lint. The pull request cannot merge until it passes.
+   `source.json` against the release repository's pin, reads a licensed
+   plugin's issuer document and holds the plugin's key ids to the others in the
+   index, then runs the package check or the install lint. The pull request
+   cannot merge until it passes.
    The schema and checks come from the `openbrf/openbrf` commit pinned as
    `CORE_REF` in the workflow.
 3. **A person.** The check says whether a package installs, not whether it is
@@ -187,7 +242,14 @@ nor an instance needs one.
    `https` call to a declared origin skips the host's disclosure validation and
    audit record, so it is refused even though the origin is declared), confirms
    that the listed repository has the tag ruleset above, and approves the pull
-   request. The reviewer also checks each new pin in
+   request. For a licensed plugin the reviewer reads its `licence.audiences`
+   as they read its `permissions`: each is a grant the board consents to, a
+   service the plugin may show that the association holds the licence. Each
+   one is the issuer's own service, at the host of `licence.issuer.url` or a
+   subdomain of it, and one the plugin needs for what its description says.
+   The reviewer confirms that the issuer's `name` is the one that holds that
+   host, since the check can hold the document only to what that address
+   answers. The reviewer also checks each new pin in
    [`repositories.json`](repositories.json) against
    `gh api repos/<owner>/<repo>`, and refuses a change to or removal of an
    existing pin that the pull request does not explain: a repository's id never
