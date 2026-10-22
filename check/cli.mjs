@@ -17,14 +17,14 @@
  * `gh attestation verify`.
  */
 import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { defaultBranchChecker } from "./branch.mjs";
 import { sdk, themeTools } from "./core.mjs";
+import { readJson } from "./json-file.mjs";
 import {
   SOURCE_FILE,
   catalogProblems,
@@ -41,9 +41,6 @@ const INDEX_VERSIONS = new Map([
   ["catalog.json", 1],
   ["catalog-v2.json", 2],
 ]);
-
-/** The most bytes read of an index file or of the repositories file. */
-const MAX_JSON_BYTES = 1024 * 1024;
 
 const args = process.argv.slice(2);
 const pinsFlag = args.indexOf("--pins");
@@ -260,46 +257,6 @@ async function issuerDocumentAt(url, maxBytes) {
     throw new Error(`${url} answered ${String(response.status)}.`);
   }
   return readAtMost(response, url, maxBytes);
-}
-
-/**
- * A JSON file, opened once so that what is measured is what is read, and
- * refused when it is not a regular file or is over `MAX_JSON_BYTES`. It is
- * opened without blocking, so that a FIFO with no writer is refused by the
- * file-type check instead of waiting for one; a regular file is unaffected.
- */
-async function readJson(path) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-  try {
-    const tooLarge = new Error(
-      `${path} is over the ${String(MAX_JSON_BYTES)} byte limit.`,
-    );
-    const stats = await file.stat();
-    if (!stats.isFile()) {
-      throw new Error(`${path} is not a regular file.`);
-    }
-    if (stats.size > MAX_JSON_BYTES) {
-      throw tooLarge;
-    }
-    const bytes = Buffer.alloc(MAX_JSON_BYTES + 1);
-    let length = 0;
-    while (length < bytes.length) {
-      const { bytesRead } = await file.read(
-        bytes,
-        length,
-        bytes.length - length,
-        null,
-      );
-      if (bytesRead === 0) break;
-      length += bytesRead;
-    }
-    if (length > MAX_JSON_BYTES) {
-      throw tooLarge;
-    }
-    return JSON.parse(bytes.subarray(0, length).toString("utf8"));
-  } finally {
-    await file.close();
-  }
 }
 
 let pinsFile;
