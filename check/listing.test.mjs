@@ -332,6 +332,38 @@ describe("the two index files, side by side", () => {
     });
   }
 
+  it("accept an entry listed with its keys in another order", () => {
+    const full = {
+      id: "occupancy",
+      name: { en: "Occupancy", sv: "Belaggning" },
+      version: "1.0.0",
+      tags: ["a", "b"],
+    };
+    const reversed = (value) =>
+      Object.fromEntries(Object.entries(value).reverse());
+    const topLevel = reversed(full);
+    const nested = { ...full, name: reversed(full.name) };
+    assert.deepEqual(indexFileProblems([full], [topLevel]), []);
+    assert.deepEqual(indexFileProblems([topLevel], [full]), []);
+    assert.deepEqual(indexFileProblems([full], [nested]), []);
+    assert.deepEqual(indexFileProblems([nested], [full]), []);
+  });
+
+  it("refuse a changed value, a changed nested value and a reordered array", () => {
+    const full = {
+      id: "occupancy",
+      name: { en: "Occupancy", sv: "Belaggning" },
+      tags: ["a", "b"],
+    };
+    for (const other of [
+      { ...full, id: "occupancy", tags: ["b", "a"] },
+      { ...full, name: { sv: "Belaggning", en: "Occupancy 2" } },
+      { ...full, extra: true },
+    ]) {
+      assert.equal(indexFileProblems([full], [other]).length, 2);
+    }
+  });
+
   it("refuse an ordinary entry that version 2 leaves out", () => {
     assert.deepEqual(indexFileProblems([ordinary], []), [
       "catalog-v2.json does not list occupancy the same as catalog.json",

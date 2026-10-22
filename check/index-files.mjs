@@ -4,6 +4,8 @@
  * in memory as well as on the files in this repository.
  */
 
+import { isDeepStrictEqual } from "node:util";
+
 /**
  * The entry fields only version 2 of the index defines. A version 1 index that
  * carries one is refused whole, so an entry with any of them is listed in
@@ -17,7 +19,8 @@ export function needsVersion2(entry) {
   return VERSION_2_FIELDS.some((field) => Object.hasOwn(entry, field));
 }
 
-const sameEntry = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Whether two entries hold the same values, whatever the order of their keys. */
+const sameEntry = (a, b) => isDeepStrictEqual(a, b);
 
 /**
  * What is wrong with the pair of indexes, each given as its entries: version 1
