@@ -247,7 +247,9 @@ whose index schema reads them, so a licensed plugin can be listed.
    attested commits are on the default branch, unpacks it and compares its
    manifest with the entry, checks the package's `source.json` against the
    release repository's pin, reads a licensed plugin's issuer document and holds
-   the plugin's key ids to the others in the index, then runs the package check or the install lint. The pull request
+   the plugin's key ids to the others in the index, then runs the package check or the install lint. When
+   both files are checked, it also holds them to each other: every entry that
+   can be listed in version 1 is the same in both. The pull request
    cannot merge until it passes.
    The schema and checks come from the `openbrf/openbrf` commit pinned as
    `CORE_REF` in the workflow.
