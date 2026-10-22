@@ -17,7 +17,7 @@
  * `gh attestation verify`.
  */
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -261,15 +261,42 @@ async function issuerDocumentAt(url, maxBytes) {
   return readAtMost(response, url, maxBytes);
 }
 
-/** A JSON file, refused before it is read when it is over `MAX_JSON_BYTES`. */
+/**
+ * A JSON file, opened once so that what is measured is what is read, and
+ * refused when it is not a regular file or is over `MAX_JSON_BYTES`.
+ */
 async function readJson(path) {
-  const { size } = await stat(path);
-  if (size > MAX_JSON_BYTES) {
-    throw new Error(
+  const file = await open(path, "r");
+  try {
+    const tooLarge = new Error(
       `${path} is over the ${String(MAX_JSON_BYTES)} byte limit.`,
     );
+    const stats = await file.stat();
+    if (!stats.isFile()) {
+      throw new Error(`${path} is not a regular file.`);
+    }
+    if (stats.size > MAX_JSON_BYTES) {
+      throw tooLarge;
+    }
+    const bytes = Buffer.alloc(MAX_JSON_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await file.read(
+        bytes,
+        length,
+        bytes.length - length,
+        null,
+      );
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_JSON_BYTES) {
+      throw tooLarge;
+    }
+    return JSON.parse(bytes.subarray(0, length).toString("utf8"));
+  } finally {
+    await file.close();
   }
-  return JSON.parse(await readFile(path, "utf8"));
 }
 
 const pins = parseRepositoryPins(await readJson(pinsPath));
