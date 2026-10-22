@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { sdk, themeTools } from "./core.mjs";
+import { indexFileProblems, needsVersion2 } from "./index-files.mjs";
 import {
   ISSUER_FORMAT,
   RELEASE_WORKFLOW,
@@ -267,7 +268,7 @@ describe("the index files in this repository", () => {
 
   it("catalog.json carries nothing that needs version 2", () => {
     for (const entry of read("catalog.json").entries) {
-      assert.equal("deviceRoutes" in entry, false, `${entry.id}`);
+      assert.equal(needsVersion2(entry), false, `${entry.id}`);
     }
   });
 
@@ -281,11 +282,71 @@ describe("the index files in this repository", () => {
   it("catalog-v2.json lists nothing else unless it needs version 2", () => {
     const v1 = new Map(read("catalog.json").entries.map((e) => [e.id, e]));
     for (const entry of read("catalog-v2.json").entries) {
-      if ("deviceRoutes" in entry) {
+      if (needsVersion2(entry)) {
         continue;
       }
       assert.deepEqual(v1.get(entry.id), entry, `${entry.id}`);
     }
+  });
+
+  it("the two files agree", () => {
+    assert.deepEqual(
+      indexFileProblems(
+        read("catalog.json").entries,
+        read("catalog-v2.json").entries,
+      ),
+      [],
+    );
+  });
+});
+
+describe("the two index files, side by side", () => {
+  const ordinary = { id: "occupancy", version: "1.0.0" };
+  const recipients = [{ id: "rates" }];
+  const deviceRoutes = [{ id: "screen", path: "screen" }];
+
+  it("accept an ordinary entry listed the same in both", () => {
+    assert.deepEqual(indexFileProblems([ordinary], [ordinary]), []);
+  });
+
+  for (const [why, extra] of [
+    ["recipients", { recipients }],
+    ["deviceRoutes", { deviceRoutes }],
+    ["empty recipients", { recipients: [] }],
+    ["empty deviceRoutes", { deviceRoutes: [] }],
+    ["both", { recipients, deviceRoutes }],
+  ]) {
+    it(`accept an entry with ${why} listed in version 2 only`, () => {
+      assert.equal(needsVersion2({ ...ordinary, ...extra }), true);
+      assert.deepEqual(
+        indexFileProblems([], [{ ...ordinary, ...extra }]),
+        [],
+      );
+    });
+
+    it(`refuse an entry with ${why} listed in version 1`, () => {
+      const entry = { ...ordinary, ...extra };
+      assert.deepEqual(indexFileProblems([entry], [entry]), [
+        "catalog.json lists occupancy, which needs version 2 of the index",
+      ]);
+    });
+  }
+
+  it("refuse an ordinary entry that version 2 leaves out", () => {
+    assert.deepEqual(indexFileProblems([ordinary], []), [
+      "catalog-v2.json does not list occupancy the same as catalog.json",
+    ]);
+  });
+
+  it("refuse an ordinary entry that version 2 lists differently", () => {
+    const changed = { ...ordinary, version: "1.1.0" };
+    assert.equal(indexFileProblems([ordinary], [changed]).length, 2);
+  });
+
+  it("refuse an ordinary entry listed in version 2 only", () => {
+    assert.deepEqual(indexFileProblems([], [ordinary]), [
+      "catalog-v2.json lists occupancy, which catalog.json does not list the same, and which does not need version 2",
+    ]);
   });
 });
 

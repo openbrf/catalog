@@ -14,14 +14,18 @@ it in two files, one for each version of the index:
 | [`catalog-v2.json`](catalog-v2.json) | 2 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog-v2.json` |
 
 An instance that reads version 1 keeps reading `catalog.json`. Version 2 adds
-`deviceRoutes` to a plugin entry
+two fields to a plugin entry, `deviceRoutes`
 ([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md))
+and `recipients`
+([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
 and changes nothing else. An instance refuses a version 1 index whole when an
-entry carries a field version 1 does not define, so an entry that needs version
-2 is listed in `catalog-v2.json` only, and `catalog.json` carries none. Every
-other entry is listed in both files, the same in both, so an instance that
-reads version 2 offers what one that reads version 1 does. A pull request that
-adds or changes an entry changes both files.
+entry carries a field version 1 does not define, so an entry that carries
+either field, an empty list included, is listed in `catalog-v2.json` only, and
+`catalog.json` carries none. Every other entry is listed in both files, the
+same in both, so an instance that reads version 2 offers what one that reads
+version 1 does. A pull request that adds or changes an entry changes both
+files, or `catalog-v2.json` only for an entry that carries `deviceRoutes` or
+`recipients`.
 
 ## What a listing must meet
 
@@ -225,7 +229,8 @@ whose index schema reads them, so a licensed plugin can be listed.
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
    `catalog.json` and in `catalog-v2.json` (only in `catalog-v2.json` when it
-   needs index version 2), and link the release it points at. A repository not yet in
+   carries `deviceRoutes` or `recipients`, which need index version 2), and
+   link the release it points at. A repository not yet in
    [`repositories.json`](repositories.json) is added there in the same pull
    request, with the ids GitHub gives it:
    `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
@@ -236,8 +241,8 @@ whose index schema reads them, so a licensed plugin can be listed.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
    every push to `main` and every night, on both `catalog.json` and
    `catalog-v2.json`. It reads each index with the core's own schema, which
-   refuses a version 1 index that carries `deviceRoutes`, looks up the release,
-   downloads the artifact, recomputes its digest and size, verifies its
+   refuses a version 1 index that carries `deviceRoutes` or `recipients`, looks
+   up the release, downloads the artifact, recomputes its digest and size, verifies its
    attestation and compares its certificate's claims, asks GitHub whether the
    attested commits are on the default branch, unpacks it and compares its
    manifest with the entry, checks the package's `source.json` against the
