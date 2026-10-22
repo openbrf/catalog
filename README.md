@@ -218,9 +218,8 @@ is the one the address answers. It refuses a listing when:
   licence for the other refused.
 
 An entry repeats the plugin's `licence` and `released`, since the board
-consents to the licence before anything is downloaded. Until `CORE_REF` names a
-core whose index schema reads them, an entry cannot carry them, so a licensed
-plugin cannot be listed.
+consents to the licence before anything is downloaded. `CORE_REF` names a core
+whose index schema reads them, so a licensed plugin can be listed.
 
 ## How a listing is reviewed
 
