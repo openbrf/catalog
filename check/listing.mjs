@@ -84,6 +84,9 @@ const MAX_NAMED_FIELDS = 5;
  * @property {(url: string, maxBytes: number) => Promise<Uint8Array>} issuerDocumentAt
  *   The document a licence's issuer publishes at its `issuer.url`, read there
  *   and not through a redirect. Asked once for each address in a run.
+ * @property {string} [indexName]
+ *   The file the index was read from, which an index the schema refuses is
+ *   reported under. `catalog.json` when left out.
  * @property {Record<string, RepositoryPin>} repositoryPins
  *   The GitHub ids of each repository a listing may come from, by
  *   `<owner>/<repo>` as the artifact URL writes it: `repositories.json`.
@@ -172,7 +175,7 @@ export function parseRepositoryPins(input) {
 }
 
 /**
- * Checks a parsed `catalog.json`.
+ * Checks a parsed index file: `catalog.json`, or `catalog-v2.json`.
  *
  * Returns every problem found, each prefixed with the entry it concerns. An
  * index the schema refuses is reported as such and nothing further is checked,
@@ -185,7 +188,8 @@ export function parseRepositoryPins(input) {
 export async function catalogProblems(input, deps) {
   const parsed = deps.sdk.parseCatalogIndex(input);
   if (!parsed.ok) {
-    return parsed.issues.map((issue) => oneLine(`catalog.json: ${issue}`));
+    const name = deps.indexName ?? "catalog.json";
+    return parsed.issues.map((issue) => oneLine(`${name}: ${issue}`));
   }
 
   const { entries } = parsed.value;

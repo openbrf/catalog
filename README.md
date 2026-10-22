@@ -2,12 +2,26 @@
 
 Curated plugin and theme catalog for Open BRF. Static JSON index consumed by an instance at install time.
 
-Every instance reads [`catalog.json`](catalog.json) from `main` at
-`https://raw.githubusercontent.com/openbrf/catalog/main/catalog.json` and offers
-what it lists. The format is the one index described under "Distribution and
-installation" in the
+Every instance reads an index from `main` and offers what it lists. The format is
+the one index described under "Distribution and installation" in the
 [plugin contract](https://github.com/openbrf/openbrf/blob/main/docs/plugin-contract.md),
-read with `parseCatalogIndex` from `@openbrf/plugin-sdk`.
+read with `parseCatalogIndex` from `@openbrf/plugin-sdk`. The catalog publishes
+it in two files, one for each version of the index:
+
+| File | Index version | Read from |
+| --- | --- | --- |
+| [`catalog.json`](catalog.json) | 1 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog.json` |
+| [`catalog-v2.json`](catalog-v2.json) | 2 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog-v2.json` |
+
+An instance that reads version 1 keeps reading `catalog.json`. Version 2 adds
+`deviceRoutes` to a plugin entry
+([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md))
+and changes nothing else. An instance refuses a version 1 index whole when an
+entry carries a field version 1 does not define, so an entry that needs version
+2 is listed in `catalog-v2.json` only, and `catalog.json` carries none. Every
+other entry is listed in both files, the same in both, so an instance that
+reads version 2 offers what one that reads version 1 does. A pull request that
+adds or changes an entry changes both files.
 
 ## What a listing must meet
 
@@ -211,7 +225,8 @@ plugin cannot be listed.
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
-   `catalog.json`, and link the release it points at. A repository not yet in
+   `catalog.json` and in `catalog-v2.json` (only in `catalog-v2.json` when it
+   needs index version 2), and link the release it points at. A repository not yet in
    [`repositories.json`](repositories.json) is added there in the same pull
    request, with the ids GitHub gives it:
    `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
@@ -220,14 +235,15 @@ plugin cannot be listed.
    `description` are the curator's text, in Swedish and English; the maintainers
    may rewrite them.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
-   every push to `main` and every night. It reads the index with the core's own
-   schema, looks up the release, downloads the artifact, recomputes its digest
-   and size, verifies its attestation and compares its certificate's claims,
-   asks GitHub whether the attested commits are on the default branch, unpacks
-   it and compares its manifest with the entry, checks the package's
-   `source.json` against the release repository's pin, reads a licensed
-   plugin's issuer document and holds the plugin's key ids to the others in the
-   index, then runs the package check or the install lint. The pull request
+   every push to `main` and every night, on both `catalog.json` and
+   `catalog-v2.json`. It reads each index with the core's own schema, which
+   refuses a version 1 index that carries `deviceRoutes`, looks up the release,
+   downloads the artifact, recomputes its digest and size, verifies its
+   attestation and compares its certificate's claims, asks GitHub whether the
+   attested commits are on the default branch, unpacks it and compares its
+   manifest with the entry, checks the package's `source.json` against the
+   release repository's pin, reads a licensed plugin's issuer document and holds
+   the plugin's key ids to the others in the index, then runs the package check or the install lint. The pull request
    cannot merge until it passes.
    The schema and checks come from the `openbrf/openbrf` commit pinned as
    `CORE_REF` in the workflow.
@@ -275,7 +291,10 @@ git -C .core checkout <CORE_REF from .github/workflows/check.yml>
   && pnpm --filter "@openbrf/plugin-sdk..." --filter "@openbrf/theme-tools..." build)
 
 node --test check/                  # the checks' own tests, offline
-GH_TOKEN=$(gh auth token) node check/cli.mjs catalog.json
+GH_TOKEN=$(gh auth token) node check/cli.mjs   # catalog.json and catalog-v2.json
 ```
+
+Name the files to check one, or give another file of repository pins:
+`node check/cli.mjs [--pins repositories.json] [index.json ...]`.
 
 `OPENBRF_CORE` points the check at a checkout somewhere other than `.core`.
