@@ -3,13 +3,20 @@
  * `node --test check/`.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, describe, it } from "node:test";
+import { after, describe, it, mock } from "node:test";
+import { promisify } from "node:util";
 
 import { MAX_JSON_BYTES, readJson } from "./json-file.mjs";
+
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = fs;
+const run = promisify(execFile);
+const jsonFileUrl = new URL("./json-file.mjs", import.meta.url).href;
 
 const dir = mkdtempSync(join(tmpdir(), "catalog-json-file-"));
 after(() => {
@@ -21,17 +28,6 @@ const fileWith = (name, content) => {
   writeFileSync(path, content);
   return path;
 };
-
-/** Rejects when `promise` is still pending after `ms`, so a hang fails. */
-const within = (promise, ms) =>
-  Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => {
-        reject(new Error(`still waiting after ${String(ms)} ms`));
-      }, ms).unref(),
-    ),
-  ]);
 
 /** A JSON string document of exactly `bytes` bytes. */
 const stringOfBytes = (bytes) => JSON.stringify("a".repeat(bytes - 2));
@@ -51,12 +47,29 @@ describe("readJson", () => {
 
   it("refuses a file one byte over the limit, naming the file", async () => {
     const path = fileWith("over-limit.json", stringOfBytes(101));
-    await assert.rejects(
-      readJson(path, 100),
-      (error) =>
-        error.message === `${path} is over the 100 byte limit.` &&
-        error.stack.includes("json-file.mjs"),
-    );
+    await assert.rejects(readJson(path, 100), {
+      message: `${path} is over the 100 byte limit.`,
+    });
+  });
+
+  it("refuses a file that grew past the limit after it was measured", async () => {
+    const path = fileWith("grew.json", stringOfBytes(101));
+    // The file handle reports the size it had before it grew.
+    const realOpen = fsPromises.open;
+    mock.method(fsPromises, "open", async (...args) => {
+      const file = await realOpen(...args);
+      file.stat = async () => ({ isFile: () => true, size: 10 });
+      return file;
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(readJson(path, 100), {
+        message: `${path} is over the 100 byte limit.`,
+      });
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
   });
 
   it("refuses a file over the default limit", async () => {
@@ -78,12 +91,21 @@ describe("readJson", () => {
     async () => {
       const path = join(dir, "pipe.json");
       execFileSync("mkfifo", [path]);
-      await within(
-        assert.rejects(readJson(path), {
-          message: `${path} is not a regular file.`,
-        }),
-        5000,
+      // A child process, killed after the deadline: a reader blocked in open()
+      // would otherwise keep this process alive after the test had failed.
+      const script = `
+        import { readJson } from ${JSON.stringify(jsonFileUrl)};
+        readJson(${JSON.stringify(path)}).then(
+          () => console.log("read"),
+          (error) => console.log(error.message),
+        );
+      `;
+      const { stdout } = await run(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        { timeout: 5000, killSignal: "SIGKILL" },
       );
+      assert.equal(stdout.trim(), `${path} is not a regular file.`);
     },
   );
 
