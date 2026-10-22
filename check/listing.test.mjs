@@ -360,7 +360,10 @@ describe("the two index files, side by side", () => {
       { ...full, name: { sv: "Belaggning", en: "Occupancy 2" } },
       { ...full, extra: true },
     ]) {
-      assert.equal(indexFileProblems([full], [other]).length, 2);
+      assert.deepEqual(indexFileProblems([full], [other]), [
+        "catalog-v2.json does not list occupancy the same as catalog.json",
+        "catalog-v2.json lists occupancy, which catalog.json does not list the same, and which does not need version 2",
+      ]);
     }
   });
 
@@ -372,7 +375,10 @@ describe("the two index files, side by side", () => {
 
   it("refuse an ordinary entry that version 2 lists differently", () => {
     const changed = { ...ordinary, version: "1.1.0" };
-    assert.equal(indexFileProblems([ordinary], [changed]).length, 2);
+    assert.deepEqual(indexFileProblems([ordinary], [changed]), [
+      "catalog-v2.json does not list occupancy the same as catalog.json",
+      "catalog-v2.json lists occupancy, which catalog.json does not list the same, and which does not need version 2",
+    ]);
   });
 
   it("refuse an ordinary entry listed in version 2 only", () => {
