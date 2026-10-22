@@ -17,6 +17,7 @@
  * `gh attestation verify`.
  */
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -263,10 +264,12 @@ async function issuerDocumentAt(url, maxBytes) {
 
 /**
  * A JSON file, opened once so that what is measured is what is read, and
- * refused when it is not a regular file or is over `MAX_JSON_BYTES`.
+ * refused when it is not a regular file or is over `MAX_JSON_BYTES`. It is
+ * opened without blocking, so that a FIFO with no writer is refused by the
+ * file-type check instead of waiting for one; a regular file is unaffected.
  */
 async function readJson(path) {
-  const file = await open(path, "r");
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
     const tooLarge = new Error(
       `${path} is over the ${String(MAX_JSON_BYTES)} byte limit.`,
