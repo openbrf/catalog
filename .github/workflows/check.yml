@@ -26,7 +26,7 @@ env:
   # The openbrf/openbrf commit whose index schema and package checks the
   # listings are held to. Moved on purpose, in a reviewed change, when the
   # contract changes.
-  CORE_REF: 23f74913b06e3eb47fabb70bb63587edc2d9b7ed
+  CORE_REF: 7a70a297667e60e2879ce41fd75b6eee7176e8de
 
 jobs:
   listings:

@@ -315,13 +315,14 @@ describe("the two index files, side by side", () => {
     ["empty recipients", { recipients: [] }],
     ["empty deviceRoutes", { deviceRoutes: [] }],
     ["both", { recipients, deviceRoutes }],
+    ["extensionPoints", { extensionPoints: [{ id: "cards" }] }],
+    ["empty extensionPoints", { extensionPoints: [] }],
+    ["extends", { extends: [{ plugin: "occupancy", point: "cards" }] }],
+    ["empty extends", { extends: [] }],
   ]) {
     it(`accept an entry with ${why} listed in version 2 only`, () => {
       assert.equal(needsVersion2({ ...ordinary, ...extra }), true);
-      assert.deepEqual(
-        indexFileProblems([], [{ ...ordinary, ...extra }]),
-        [],
-      );
+      assert.deepEqual(indexFileProblems([], [{ ...ordinary, ...extra }]), []);
     });
 
     it(`refuse an entry with ${why} listed in version 1`, () => {
@@ -331,6 +332,16 @@ describe("the two index files, side by side", () => {
       ]);
     });
   }
+
+  // A theme's `extends` is its parent, which version 1 defines.
+  it("accept a theme that extends its parent listed in both", () => {
+    const child = { type: "theme", id: "child", extends: "porttavlan" };
+    assert.equal(needsVersion2(child), false);
+    assert.deepEqual(indexFileProblems([child], [child]), []);
+    assert.deepEqual(indexFileProblems([child], []), [
+      "catalog-v2.json does not list child the same as catalog.json",
+    ]);
+  });
 
   it("accept an entry listed with its keys in another order", () => {
     const full = {
@@ -2418,4 +2429,284 @@ describe("the repositories a listing may come from", () => {
       assert.equal(parseRepositoryPins(input).ok, false);
     });
   }
+});
+
+describe("a plugin's extension points", () => {
+  const CARDS = { id: "cards", version: 1, personalData: ["name"] };
+  const BADGES = {
+    id: "badges",
+    version: 2,
+    personalData: ["name", "apartment"],
+  };
+  const CURATED = {
+    title: { sv: "Kort", en: "Cards" },
+    description: { sv: "Kort på översikten", en: "Cards on the overview" },
+  };
+  const listed = (point) => ({ ...point, ...CURATED });
+
+  const hostPackage = (extensionPoints) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, extensionPoints },
+    });
+
+  async function problemsOf(bytes, overrides, version = 2) {
+    const entry = pluginEntry(bytes, overrides);
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's, in any order", async () => {
+    const bytes = hostPackage([CARDS, BADGES]);
+    const reordered = { ...BADGES, personalData: ["apartment", "name"] };
+    assert.deepEqual(
+      await problemsOf(bytes, {
+        extensionPoints: [listed(reordered), listed(CARDS)],
+      }),
+      [],
+    );
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    assert.deepEqual(await problemsOf(plugin, { extensionPoints: [] }), []);
+  });
+
+  it("fails when the package declares one the entry leaves out", async () => {
+    const bytes = hostPackage([CARDS, BADGES]);
+    const problems = await problemsOf(bytes, {
+      extensionPoints: [listed(CARDS)],
+    });
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extension points is .*, the package's is .*badges/,
+    );
+  });
+
+  it("fails when the package declares some and the entry says nothing", async () => {
+    const problems = await problemsOf(hostPackage([CARDS]), {});
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extension points is \[\], the package's is .*cards/,
+    );
+  });
+
+  it("fails when the entry declares one the package does not", async () => {
+    const problems = await problemsOf(plugin, {
+      extensionPoints: [listed(CARDS)],
+    });
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extension points is .*cards.*, the package's is \[\]\.$/,
+    );
+  });
+
+  for (const [field, value] of [
+    ["id", "tiles"],
+    ["version", 2],
+    ["personalData", ["apartment"]],
+    ["personalData", []],
+  ]) {
+    it(`fails when the entry states another ${field} than the package (${JSON.stringify(value)})`, async () => {
+      const problems = await problemsOf(hostPackage([CARDS]), {
+        extensionPoints: [listed({ ...CARDS, [field]: value })],
+      });
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /the entry's extension points is /);
+    });
+  }
+
+  it("does not hold the curator's text to the package", async () => {
+    const other = {
+      title: { sv: "Annat", en: "Another" },
+      description: { sv: "Annan text", en: "Other text" },
+    };
+    assert.deepEqual(
+      await problemsOf(hostPackage([CARDS]), {
+        extensionPoints: [{ ...CARDS, ...other }],
+      }),
+      [],
+    );
+  });
+
+  for (const [why, remove] of [
+    ["title", "title"],
+    ["description", "description"],
+  ]) {
+    it(`fails when the entry gives a point no ${why}`, async () => {
+      const { [remove]: _removed, ...incomplete } = listed(CARDS);
+      const problems = await problemsOf(hostPackage([CARDS]), {
+        extensionPoints: [incomplete],
+      });
+      assert.notDeepEqual(problems, []);
+      assert.ok(
+        problems.every((problem) =>
+          new RegExp(
+            `catalog.json: entries\\.0\\.extensionPoints\\.0\\.${remove}`,
+          ).test(problem),
+        ),
+        problems.join("\n"),
+      );
+    });
+  }
+
+  for (const language of ["sv", "en"]) {
+    for (const field of ["title", "description"]) {
+      it(`fails when a point's ${field} has no ${language} text`, async () => {
+        const { [language]: _removed, ...text } = CURATED[field];
+        const problems = await problemsOf(hostPackage([CARDS]), {
+          extensionPoints: [{ ...listed(CARDS), [field]: text }],
+        });
+        assert.notDeepEqual(problems, []);
+        assert.ok(
+          problems.some((problem) =>
+            problem.includes(`extensionPoints.0.${field}`),
+          ),
+          problems.join("\n"),
+        );
+      });
+    }
+  }
+
+  it("fails when an index of version 1 carries them", async () => {
+    const problems = await problemsOf(
+      hostPackage([CARDS]),
+      { extensionPoints: [listed(CARDS)] },
+      1,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /extensionPoints needs version 2 of the index/);
+  });
+
+  it("fails when an index of version 1 lists a plugin that declares them", async () => {
+    const problems = await problemsOf(hostPackage([CARDS]), {}, 1);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /the package's is .*cards/);
+  });
+});
+
+describe("a plugin's extends", () => {
+  const CARDS_OF_OCCUPANCY = {
+    plugin: "occupancy",
+    point: "cards",
+    version: 1,
+    personalData: ["name"],
+  };
+  const NOTICES = {
+    plugin: "board",
+    point: "notices",
+    version: 1,
+    personalData: [],
+  };
+  const ADDON_ID = "occupancy-extra";
+
+  const addonPackage = (extensions) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      name: "@example/openbrf-occupancy-extra",
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, id: ADDON_ID, extends: extensions },
+    });
+
+  async function problemsOf(bytes, overrides, version = 2) {
+    const entry = pluginEntry(bytes, {
+      id: ADDON_ID,
+      packageName: "@example/openbrf-occupancy-extra",
+      ...overrides,
+    });
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's, in any order", async () => {
+    const bytes = addonPackage([CARDS_OF_OCCUPANCY, NOTICES]);
+    assert.deepEqual(
+      await problemsOf(bytes, { extends: [NOTICES, CARDS_OF_OCCUPANCY] }),
+      [],
+    );
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    assert.deepEqual(await problemsOf(addonPackage([]), { extends: [] }), []);
+  });
+
+  it("fails when the package extends a point the entry leaves out", async () => {
+    const bytes = addonPackage([CARDS_OF_OCCUPANCY, NOTICES]);
+    const problems = await problemsOf(bytes, { extends: [NOTICES] });
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extends is .*, the package's is .*cards/,
+    );
+  });
+
+  it("fails when the package extends and the entry says nothing", async () => {
+    const problems = await problemsOf(addonPackage([CARDS_OF_OCCUPANCY]), {});
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extends is \[\], the package's is .*cards/,
+    );
+  });
+
+  it("fails when the entry extends a point the package does not", async () => {
+    const problems = await problemsOf(addonPackage([]), {
+      extends: [CARDS_OF_OCCUPANCY],
+    });
+    assert.equal(problems.length, 1);
+    assert.match(
+      problems[0],
+      /the entry's extends is .*cards.*, the package's is \[\]\.$/,
+    );
+  });
+
+  for (const [field, value] of [
+    ["plugin", "board"],
+    ["point", "badges"],
+    ["version", 2],
+    ["personalData", []],
+  ]) {
+    it(`fails when the entry states another ${field} than the package`, async () => {
+      const problems = await problemsOf(addonPackage([CARDS_OF_OCCUPANCY]), {
+        extends: [{ ...CARDS_OF_OCCUPANCY, [field]: value }],
+      });
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /the entry's extends is /);
+    });
+  }
+
+  it("fails when an index of version 1 carries it", async () => {
+    const problems = await problemsOf(
+      addonPackage([CARDS_OF_OCCUPANCY]),
+      { extends: [CARDS_OF_OCCUPANCY] },
+      1,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /extends needs version 2 of the index/);
+  });
+
+  it("fails when an index of version 1 lists a plugin that extends", async () => {
+    const problems = await problemsOf(
+      addonPackage([CARDS_OF_OCCUPANCY]),
+      {},
+      1,
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /the package's is .*cards/);
+  });
+
+  it("does not take a theme's parent for an extension", async () => {
+    assert.deepEqual(
+      await catalogProblems(
+        { version: 1, entries: [themeEntry(theme)] },
+        published([themeFile]),
+      ),
+      [],
+    );
+  });
 });

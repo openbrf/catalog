@@ -704,6 +704,20 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         recipientSet(entry.recipients === undefined ? [] : entry.recipients),
         recipientSet(packagedRecipients(manifest, packageJson)),
       ],
+      // The board reads the points a plugin offers and the ones it extends
+      // before anything is downloaded (ADR 0030). The entry's points also
+      // carry the curator's title and description, which the package has no
+      // counterpart for, so the rest is compared. Absent is none on both sides.
+      [
+        "extension points",
+        pointSet(entry.extensionPoints ?? []),
+        pointSet(manifest.extensionPoints ?? []),
+      ],
+      [
+        "extends",
+        extensionSet(entry.extends ?? []),
+        extensionSet(manifest.extends ?? []),
+      ],
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
       ["ai", entry.ai ?? false, manifest.ai ?? false],
@@ -1056,6 +1070,31 @@ function sorted(values) {
 /** Actions compared as a set, each with its keys in one order. */
 function actionSet(actions) {
   return actions.map(canonical).sort();
+}
+
+/**
+ * Extension points compared as a set, each with its categories in one order
+ * and without the curator's `title` and `description`, which only an entry
+ * carries.
+ */
+function pointSet(points) {
+  return points
+    .map(({ title: _title, description: _description, ...point }) =>
+      canonical({ ...point, personalData: sorted(point.personalData) }),
+    )
+    .sort();
+}
+
+/** The extension points a plugin extends, compared as a set like the above. */
+function extensionSet(extensions) {
+  return extensions
+    .map((extension) =>
+      canonical({
+        ...extension,
+        personalData: sorted(extension.personalData),
+      }),
+    )
+    .sort();
 }
 
 /**
