@@ -7,16 +7,28 @@
 import { isDeepStrictEqual } from "node:util";
 
 /**
- * The entry fields only version 2 of the index defines. A version 1 index that
- * carries one is refused whole, so an entry with any of them is listed in
- * `catalog-v2.json` only. Found by presence, an empty array included, as the
- * schema refuses it either way.
+ * The plugin entry fields only version 2 of the index defines. A version 1
+ * index that carries one is refused whole, so an entry with any of them is
+ * listed in `catalog-v2.json` only. Found by presence, an empty array
+ * included, as the schema refuses it either way.
  */
-export const VERSION_2_FIELDS = ["deviceRoutes", "recipients"];
+export const VERSION_2_FIELDS = [
+  "deviceRoutes",
+  "recipients",
+  "extensionPoints",
+  "extends",
+];
 
-/** Whether the entry carries a field that only version 2 defines. */
+/**
+ * Whether the entry carries a field that only version 2 defines. A theme's
+ * `extends` is its parent, a string that version 1 defines already, so only a
+ * plugin's fields are looked for.
+ */
 export function needsVersion2(entry) {
-  return VERSION_2_FIELDS.some((field) => Object.hasOwn(entry, field));
+  return (
+    entry.type !== "theme" &&
+    VERSION_2_FIELDS.some((field) => Object.hasOwn(entry, field))
+  );
 }
 
 /** Whether two entries hold the same values, whatever the order of their keys. */

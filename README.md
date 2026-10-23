@@ -14,18 +14,22 @@ it in two files, one for each version of the index:
 | [`catalog-v2.json`](catalog-v2.json) | 2 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog-v2.json` |
 
 An instance that reads version 1 keeps reading `catalog.json`. Version 2 adds
-two fields to a plugin entry, `deviceRoutes`
-([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md))
-and `recipients`
+four fields to a plugin entry, `deviceRoutes`
+([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md)),
+`recipients`
 ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
+`extensionPoints` and `extends`
+([ADR 0030](https://github.com/openbrf/openbrf/blob/main/docs/adr/0030-plugins-that-extend-plugins.md)),
 and changes nothing else. An instance refuses a version 1 index whole when an
-entry carries a field version 1 does not define, so an entry that carries
-either field, an empty list included, is listed in `catalog-v2.json` only, and
-`catalog.json` carries none. Every other entry is listed in both files, the
-same in both, so an instance that reads version 2 offers what one that reads
-version 1 does. A pull request that adds or changes an entry changes both
-files, or `catalog-v2.json` only for an entry that carries `deviceRoutes` or
-`recipients`.
+entry carries a field version 1 does not define, so a plugin entry that carries
+any of the four, an empty list included, is listed in `catalog-v2.json` only,
+and `catalog.json` carries none. (A theme's `extends`, the theme it inherits
+from, is a text that version 1 defines, and is listed in both files.) Every
+other entry is listed in both files, the same in both, so an instance that
+reads version 2 offers what one that reads version 1 does. A pull request that
+adds or changes an entry changes both files, or `catalog-v2.json` only for a
+plugin entry that carries `deviceRoutes`, `recipients`, `extensionPoints` or
+`extends`.
 
 ## What a listing must meet
 
@@ -62,7 +66,9 @@ A package is listed when:
 - the package agrees with the entry: for a plugin the package name, version,
   id, API version, permissions, personal data categories, actions, protected
   resource, recipients (each one's id, origin, purpose and categories, the
-  board reading the entry's before anything is downloaded), whether it is an
+  board reading the entry's before anything is downloaded), extension points
+  it offers and the ones it extends (each one's id, version and categories, as
+  [below](#a-plugin-that-offers-or-extends-extension-points)), whether it is an
   AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
@@ -177,6 +183,63 @@ maintainer also checks that the release repository:
 The credential is never in the package or the release, and neither the catalog
 nor an instance needs one.
 
+### A plugin that offers or extends extension points
+
+A plugin can offer other plugins a place to contribute to, an extension point,
+and a plugin can extend a point another plugin offers
+([ADR 0030](https://github.com/openbrf/openbrf/blob/main/docs/adr/0030-plugins-that-extend-plugins.md)).
+Both are declared in the package's manifest, as `extensionPoints` and
+`extends`, and the board reads them on the consent screens before anything is
+downloaded, so the entry repeats them. A plugin that does either is listed in
+`catalog-v2.json` only.
+
+For a plugin that offers points, `extensionPoints` lists each one with the
+manifest's own fields and the curator's text:
+
+```json
+"extensionPoints": [
+  {
+    "id": "cards",
+    "version": 1,
+    "personalData": ["name"],
+    "title": { "sv": "<title in Swedish>", "en": "<title in English>" },
+    "description": { "sv": "<what it accepts, in Swedish>", "en": "<what it accepts, in English>" }
+  }
+]
+```
+
+The `title` and `description` of each point are required, in Swedish and in
+English, and are the curator's rather than the plugin's own, as an entry's
+`name` and `description` are: an addon's consent screen has to name the point
+before the host plugin's locale files exist on the instance. The maintainers
+may rewrite them, and the check does not compare them with the package. A
+listing without them, or without one of the two languages, is refused by the
+index schema.
+
+For a plugin that extends points, `extends` lists each one exactly as the
+manifest does, with no further field:
+
+```json
+"extends": [
+  { "plugin": "<host plugin id>", "point": "cards", "version": 1, "personalData": ["name"] }
+]
+```
+
+The check compares both lists with the package's, as a set: the order of the
+points, and of the categories in each, does not matter, and an entry that
+leaves the field out has none. It refuses the listing when the package offers
+or extends a point the entry does not repeat, when the entry repeats one the
+package does not declare, or when an id, a version or the categories differ.
+The index schema holds the entry to the manifest's own rules (an addon declares
+no points of its own, a point accepts only categories the plugin itself
+handles), and, when the index lists both plugins, to the rule between an addon
+and the plugin it extends: that the host offers the point, at the version the
+addon names, and accepts the categories the addon hands it, and that their
+permissions and the plugins joined by extensions do not put a register reader
+beside a plugin that publishes to the website. A host
+plugin that this index does not list is held to the same rules by the instance
+when both are installed.
+
 ### A licensed plugin
 
 A paid plugin declares the instance licence it reads in its manifest's
@@ -228,9 +291,9 @@ whose index schema reads them, so a licensed plugin can be listed.
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
-   `catalog.json` and in `catalog-v2.json` (only in `catalog-v2.json` when it
-   carries `deviceRoutes` or `recipients`, which need index version 2), and
-   link the release it points at. A repository not yet in
+   `catalog.json` and in `catalog-v2.json` (only in `catalog-v2.json` when a
+   plugin entry carries `deviceRoutes`, `recipients`, `extensionPoints` or
+   `extends`, which need index version 2), and link the release it points at. A repository not yet in
    [`repositories.json`](repositories.json) is added there in the same pull
    request, with the ids GitHub gives it:
    `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
@@ -241,7 +304,8 @@ whose index schema reads them, so a licensed plugin can be listed.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
    every push to `main` and every night, on both `catalog.json` and
    `catalog-v2.json`. It reads each index with the core's own schema, which
-   refuses a version 1 index that carries `deviceRoutes` or `recipients`, looks
+   refuses a version 1 index that carries `deviceRoutes`, `recipients`,
+   `extensionPoints` or `extends`, looks
    up the release, downloads the artifact, recomputes its digest and size, verifies its
    attestation and compares its certificate's claims, asks GitHub whether the
    attested commits are on the default branch, unpacks it and compares its
