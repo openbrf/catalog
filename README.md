@@ -304,8 +304,9 @@ whose index schema reads them, so a licensed plugin can be listed.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
    every push to `main` and every night, on both `catalog.json` and
    `catalog-v2.json`. It reads each index with the core's own schema, which
-   refuses a version 1 index that carries `deviceRoutes`, `recipients`,
-   `extensionPoints` or `extends`, looks
+   refuses a version 1 index in which a plugin entry carries `deviceRoutes`,
+   `recipients`, `extensionPoints` or `extends` (a theme's `extends` is valid
+   in both), looks
    up the release, downloads the artifact, recomputes its digest and size, verifies its
    attestation and compares its certificate's claims, asks GitHub whether the
    attested commits are on the default branch, unpacks it and compares its
