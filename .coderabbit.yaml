@@ -140,9 +140,9 @@ reviews:
         that promises more than the declaration allows.
 
         catalog.json is index version 1 and catalog-v2.json is version 2. An
-        entry that needs version 2 (one with deviceRoutes) is listed in
-        catalog-v2.json only, and every other entry is listed in both, the same
-        in both.
+        entry that needs version 2 (one with deviceRoutes or recipients, an
+        empty list included) is listed in catalog-v2.json only, and every
+        other entry is listed in both, the same in both.
 
         Removing an entry takes the package away from new installs and leaves
         existing ones without updates; "deprecated": true keeps existing

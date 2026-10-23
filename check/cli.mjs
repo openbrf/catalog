@@ -24,6 +24,7 @@ import { promisify } from "node:util";
 
 import { defaultBranchChecker } from "./branch.mjs";
 import { sdk, themeTools } from "./core.mjs";
+import { indexFileProblems } from "./index-files.mjs";
 import { readJson } from "./json-file.mjs";
 import {
   SOURCE_FILE,
@@ -275,6 +276,9 @@ if (!pins.ok) {
   process.exit(1);
 }
 
+/** The indexes that passed, by file name, for the check of how they relate. */
+const passedIndexes = new Map();
+
 for (const indexPath of indexPaths) {
   let index;
   try {
@@ -319,5 +323,21 @@ for (const indexPath of indexPaths) {
     console.log(
       `${indexPath}: ${String(count)} ${count === 1 ? "entry passes" : "entries pass"} the listing checks.`,
     );
+    passedIndexes.set(basename(indexPath), index);
+  }
+}
+
+// The two files carry the same entries wherever version 1 can, so a pair that
+// passed one by one is still held to that when both were checked.
+const version1 = passedIndexes.get("catalog.json");
+const version2 = passedIndexes.get("catalog-v2.json");
+if (version1 !== undefined && version2 !== undefined) {
+  const problems = indexFileProblems(version1.entries, version2.entries);
+  if (problems.length > 0) {
+    console.error("catalog.json and catalog-v2.json do not agree:\n");
+    for (const problem of problems) {
+      console.error(`  - ${problem}`);
+    }
+    process.exitCode = 1;
   }
 }
