@@ -718,6 +718,16 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         extensionSet(entry.extends ?? []),
         extensionSet(manifest.extends ?? []),
       ],
+      // The board reads the processing a plugin declares on the consent screen
+      // before anything is downloaded, and the install seeds the record of
+      // processing activities from it (ADR 0035), so the entry repeats it
+      // whole, the categories of data subjects as a set. Absent is none on
+      // both sides: a version 1 entry cannot carry it.
+      [
+        "processing",
+        processingForComparison(entry.processing ?? null),
+        processingForComparison(manifest.processing ?? null),
+      ],
       // Absent is false on both sides, and a core that does not know `ai` yet
       // reads neither, so this holds before and after the core moves.
       ["ai", entry.ai ?? false, manifest.ai ?? false],
@@ -1125,6 +1135,13 @@ function recipientSet(recipients) {
       ),
     )
     .sort();
+}
+
+/** A processing declaration compared with its data subjects as a set. */
+function processingForComparison(processing) {
+  return isObject(processing) && Array.isArray(processing.dataSubjects)
+    ? { ...processing, dataSubjects: sorted(processing.dataSubjects) }
+    : processing;
 }
 
 /**

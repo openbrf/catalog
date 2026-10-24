@@ -17,6 +17,7 @@ export const VERSION_2_FIELDS = [
   "recipients",
   "extensionPoints",
   "extends",
+  "processing",
 ];
 
 /**
