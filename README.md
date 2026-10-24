@@ -14,22 +14,26 @@ it in two files, one for each version of the index:
 | [`catalog-v2.json`](catalog-v2.json) | 2 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog-v2.json` |
 
 An instance that reads version 1 keeps reading `catalog.json`. Version 2 adds
-four fields to a plugin entry, `deviceRoutes`
+five fields to a plugin entry, `deviceRoutes`
 ([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md)),
 `recipients`
 ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
 `extensionPoints` and `extends`
 ([ADR 0030](https://github.com/openbrf/openbrf/blob/main/docs/adr/0030-plugins-that-extend-plugins.md)),
+and `processing`
+([ADR 0035](https://github.com/openbrf/openbrf/blob/main/docs/adr/0035-a-plugin-s-processing-and-objecting-to-it.md)),
 and changes nothing else. An instance refuses a version 1 index whole when an
 entry carries a field version 1 does not define, so a plugin entry that carries
-any of the four, an empty list included, is listed in `catalog-v2.json` only,
+any of the five, an empty list included, is listed in `catalog-v2.json` only,
 and `catalog.json` carries none. (A theme's `extends`, the theme it inherits
 from, is a text that version 1 defines, and is listed in both files.) Every
 other entry is listed in both files, the same in both, so an instance that
 reads version 2 offers what one that reads version 1 does. A pull request that
 adds or changes an entry changes both files, or `catalog-v2.json` only for a
-plugin entry that carries `deviceRoutes`, `recipients`, `extensionPoints` or
-`extends`.
+plugin entry that carries `deviceRoutes`, `recipients`, `extensionPoints`, `extends` or
+`processing`. A plugin that declares personal data states its processing
+declaration, so such a plugin is listed in `catalog-v2.json` only, and an
+instance that reads version 1 does not offer it.
 
 ## What a listing must meet
 
@@ -68,7 +72,10 @@ A package is listed when:
   resource, recipients (each one's id, origin, purpose and categories, the
   board reading the entry's before anything is downloaded), extension points
   it offers and the ones it extends (each one's id, version and categories, as
-  [below](#a-plugin-that-offers-or-extends-extension-points)), whether it is an
+  [below](#a-plugin-that-offers-or-extends-extension-points)), its
+  processing declaration (whole, the categories of data subjects as a set: the consent screen
+  shows it before anything is downloaded, and the install seeds the record of
+  processing activities from it), whether it is an
   AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
@@ -292,8 +299,8 @@ whose index schema reads them, so a licensed plugin can be listed.
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
    `catalog.json` and in `catalog-v2.json` (only in `catalog-v2.json` when a
-   plugin entry carries `deviceRoutes`, `recipients`, `extensionPoints` or
-   `extends`, which need index version 2), and link the release it points at. A repository not yet in
+   plugin entry carries `deviceRoutes`, `recipients`, `extensionPoints`, `extends` or
+   `processing`, which need index version 2), and link the release it points at. A repository not yet in
    [`repositories.json`](repositories.json) is added there in the same pull
    request, with the ids GitHub gives it:
    `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
@@ -305,7 +312,7 @@ whose index schema reads them, so a licensed plugin can be listed.
    every push to `main` and every night, on both `catalog.json` and
    `catalog-v2.json`. It reads each index with the core's own schema, which
    refuses a version 1 index in which a plugin entry carries `deviceRoutes`,
-   `recipients`, `extensionPoints` or `extends` (a theme's `extends` is valid
+   `recipients`, `extensionPoints`, `extends` or `processing` (a theme's `extends` is valid
    in both), looks
    up the release, downloads the artifact, recomputes its digest and size, verifies its
    attestation and compares its certificate's claims, asks GitHub whether the

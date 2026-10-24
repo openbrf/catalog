@@ -25,6 +25,21 @@ const encode = (value) =>
     typeof value === "string" ? value : JSON.stringify(value),
   );
 
+/** What the plugin fixtures declare as their processing (ADR 0035). */
+const PROCESSING = {
+  purpose: { sv: "Visa antalet boende", en: "Show the number of residents" },
+  legalBasis: "legitimateInterest",
+  legitimateInterest: {
+    sv: "Styrelsens överblick över boendet",
+    en: "The board's overview of who lives in the building",
+  },
+  retention: {
+    sv: "Ingenting sparas",
+    en: "Nothing is kept",
+  },
+  dataSubjects: ["members", "residents"],
+};
+
 const PLUGIN_PACKAGE = {
   name: "@example/openbrf-occupancy",
   version: "1.0.0",
@@ -35,6 +50,7 @@ const PLUGIN_PACKAGE = {
     entry: { server: "./dist/server.cjs" },
     permissions: ["addressBook:read"],
     personalData: ["name", "apartment"],
+    processing: PROCESSING,
   },
 };
 
@@ -96,7 +112,7 @@ function releaseUrl(repo, version, file) {
 }
 
 function pluginEntry(bytes, overrides = {}) {
-  return {
+  const entry = {
     type: "plugin",
     id: "occupancy",
     packageName: "@example/openbrf-occupancy",
@@ -105,6 +121,7 @@ function pluginEntry(bytes, overrides = {}) {
     ...TEXT,
     permissions: ["addressBook:read"],
     personalData: ["name", "apartment"],
+    processing: PROCESSING,
     artifact: {
       url: releaseUrl("openbrf-occupancy", "1.0.0", "occupancy-1.0.0.tgz"),
       sha512: sri(bytes),
@@ -112,7 +129,22 @@ function pluginEntry(bytes, overrides = {}) {
     },
     ...overrides,
   };
+  // An index of version 1 refuses the key itself, whatever it holds.
+  if (entry.processing === undefined) {
+    delete entry.processing;
+  }
+  return entry;
 }
+
+/**
+ * A plugin whose package declares its processing cannot be listed in an index
+ * of version 1, which does not define the field (ADR 0035). A test about what
+ * else version 1 refuses lists the entry without it and sets aside the
+ * disagreement with the package that follows.
+ */
+const inVersion1 = (overrides) => ({ ...overrides, processing: undefined });
+const exceptProcessing = (problems) =>
+  problems.filter((problem) => !problem.includes("the entry's processing is "));
 
 function themeEntry(bytes, overrides = {}) {
   return {
@@ -319,6 +351,7 @@ describe("the two index files, side by side", () => {
     ["empty extensionPoints", { extensionPoints: [] }],
     ["extends", { extends: [{ plugin: "occupancy", point: "cards" }] }],
     ["empty extends", { extends: [] }],
+    ["processing", { processing: { dataSubjects: ["members"] } }],
   ]) {
     it(`accept an entry with ${why} listed in version 2 only`, () => {
       assert.equal(needsVersion2({ ...ordinary, ...extra }), true);
@@ -402,10 +435,20 @@ describe("the two index files, side by side", () => {
 describe("an index of version 1", () => {
   const deviceRoutes = [{ id: "screen", path: "screen" }];
   // A device is a screen anyone passing reads, so the plugin reads no register.
-  const overrides = { permissions: [], personalData: [], deviceRoutes };
+  const overrides = {
+    permissions: [],
+    personalData: [],
+    processing: undefined,
+    deviceRoutes,
+  };
   const bytes = pluginArchive({
     ...PLUGIN_PACKAGE,
-    openbrf: { ...PLUGIN_PACKAGE.openbrf, permissions: [], personalData: [] },
+    openbrf: {
+      ...PLUGIN_PACKAGE.openbrf,
+      permissions: [],
+      personalData: [],
+      processing: undefined,
+    },
   });
 
   it("is refused when an entry carries deviceRoutes", async () => {
@@ -468,7 +511,7 @@ describe("an index of version 2", () => {
 describe("a listing", () => {
   it("passes when the artifact is the one the entry states", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      { version: 2, entries: [pluginEntry(plugin), themeEntry(theme)] },
       published([pluginFile, themeFile]),
     );
     assert.deepEqual(problems, []);
@@ -479,7 +522,7 @@ describe("a listing", () => {
     const entry = pluginEntry(plugin);
     entry.artifact.sha512 = other;
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([pluginFile]),
     );
     assert.equal(problems.length, 1);
@@ -490,7 +533,7 @@ describe("a listing", () => {
     const entry = themeEntry(theme);
     entry.artifact.sha512 = "ab".repeat(64);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([themeFile]),
     );
     assert.equal(problems.length, 1);
@@ -501,7 +544,7 @@ describe("a listing", () => {
     const entry = themeEntry(theme);
     entry.artifact.bytes = theme.byteLength + 1;
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([themeFile]),
     );
     assert.ok(problems.length > 0);
@@ -513,7 +556,7 @@ describe("a listing", () => {
     const longer = new Uint8Array([...plugin, 0]);
     deps.fetchArtifact = async () => longer;
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.equal(problems.length, 2);
@@ -524,7 +567,7 @@ describe("a listing", () => {
   it("fails when the release lists another size than the entry and the download", async () => {
     const file = pluginEntry(plugin).artifact.url.split("/").at(-1);
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         release: { assets: [{ name: file, size: plugin.byteLength + 1 }] },
       }),
@@ -537,7 +580,7 @@ describe("a listing", () => {
     const entry = pluginEntry(plugin);
     delete entry.artifact.bytes;
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([pluginFile]),
     );
     assert.equal(problems.length, 1);
@@ -547,7 +590,7 @@ describe("a listing", () => {
   it("fails when the index is not one the instance reads", async () => {
     const entry = { ...pluginEntry(plugin), sha256: "x" };
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([pluginFile]),
     );
     assert.ok(problems.length > 0);
@@ -557,7 +600,7 @@ describe("a listing", () => {
   it("fails when an id is listed twice", async () => {
     const problems = await catalogProblems(
       {
-        version: 1,
+        version: 2,
         entries: [pluginEntry(plugin), themeEntry(theme, { id: "occupancy" })],
       },
       published([pluginFile, themeFile]),
@@ -569,7 +612,7 @@ describe("a listing", () => {
   it("fails when the release is a pre-release or not immutable", async () => {
     for (const release of [{ prerelease: true }, { immutable: false }]) {
       const problems = await catalogProblems(
-        { version: 1, entries: [pluginEntry(plugin)] },
+        { version: 2, entries: [pluginEntry(plugin)] },
         published([pluginFile], { release }),
       );
       assert.equal(problems.length, 1, JSON.stringify(release));
@@ -578,7 +621,7 @@ describe("a listing", () => {
 
   it("fails when there is no such release", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([]),
     );
     assert.equal(problems.length, 1);
@@ -600,7 +643,7 @@ describe("a listing", () => {
     const wrongSize = themeEntry(theme);
     wrongSize.artifact.bytes = theme.byteLength + 1;
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin), wrongSize] },
+      { version: 2, entries: [pluginEntry(plugin), wrongSize] },
       deps,
     );
     assert.equal(problems.length, 2);
@@ -625,7 +668,7 @@ describe("a listing", () => {
       return { ok: true, certificates: [certificate(repository, tag)] };
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.deepEqual(problems, []);
@@ -646,7 +689,7 @@ describe("a listing", () => {
       throw new Error("not asked about a repository nobody pinned");
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.equal(problems.length, 1);
@@ -658,7 +701,7 @@ describe("a listing", () => {
 
   it("holds each repository to its own ids", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      { version: 2, entries: [pluginEntry(plugin), themeEntry(theme)] },
       published([pluginFile, themeFile], {
         pins: {
           ...PINS,
@@ -673,7 +716,7 @@ describe("a listing", () => {
 
   it("fails when the attestation does not verify", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         attestation: { ok: false, reason: "no attestation found" },
       }),
@@ -769,7 +812,7 @@ describe("a listing", () => {
           throw new Error("not asked about an attestation from another signer");
         };
         const problems = await catalogProblems(
-          { version: 1, entries: [pluginEntry(plugin)] },
+          { version: 2, entries: [pluginEntry(plugin)] },
           deps,
         );
         const [claim, value] = Object.entries(overrides)[0];
@@ -786,7 +829,7 @@ describe("a listing", () => {
 
   it("fails when any of several attestations is from another signer", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         certificates: [{}, { runnerEnvironment: "self-hosted" }],
       }),
@@ -798,7 +841,7 @@ describe("a listing", () => {
   it("fails when gh reports no attestation, or one without a certificate", async () => {
     for (const certificates of [[], [null], [undefined]]) {
       const problems = await catalogProblems(
-        { version: 1, entries: [pluginEntry(plugin)] },
+        { version: 2, entries: [pluginEntry(plugin)] },
         published([pluginFile], {
           attestation: { ok: true, certificates },
         }),
@@ -815,7 +858,7 @@ describe("a listing", () => {
   // that the commit is on main can be deleted on a branch that is then tagged.
   it("fails when the attested source is a commit main does not have", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      { version: 2, entries: [pluginEntry(plugin), themeEntry(theme)] },
       published([pluginFile, themeFile], {
         certificates: [
           { sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN },
@@ -835,7 +878,7 @@ describe("a listing", () => {
 
   it("fails when the run's configuration was read at a commit main does not have", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         certificates: [{ buildConfigDigest: OFF_MAIN }],
       }),
@@ -846,7 +889,7 @@ describe("a listing", () => {
 
   it("fails when the signing workflow was read at a commit main does not have", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         certificates: [{ buildSignerDigest: OFF_MAIN }],
       }),
@@ -857,7 +900,7 @@ describe("a listing", () => {
 
   it("fails when any of several attestations is off main", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       published([pluginFile], {
         certificates: [
           {},
@@ -879,7 +922,7 @@ describe("a listing", () => {
       return { branch: "main", has: true };
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.deepEqual(problems, []);
@@ -905,7 +948,7 @@ describe("a listing", () => {
         throw new Error("not asked about a malformed commit");
       };
       const problems = await catalogProblems(
-        { version: 1, entries: [pluginEntry(plugin)] },
+        { version: 2, entries: [pluginEntry(plugin)] },
         deps,
       );
       assert.equal(problems.length, 1, JSON.stringify(certificates));
@@ -923,7 +966,7 @@ describe("a listing", () => {
       throw new Error("GitHub answered 503.");
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.equal(problems.length, 1);
@@ -937,7 +980,7 @@ describe("a listing", () => {
     const deps = published([pluginFile]);
     deps.defaultBranchHas = async () => ({ branch: "trunk", has: false });
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.equal(problems.length, 1);
@@ -957,7 +1000,7 @@ describe("a listing", () => {
     });
     const entry = pluginEntry(wider);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: wider }]),
     );
     assert.equal(problems.length, 1);
@@ -982,7 +1025,7 @@ describe("a listing", () => {
     async function problemsOf(bytes, overrides) {
       const entry = pluginEntry(bytes, overrides);
       return catalogProblems(
-        { version: 1, entries: [entry] },
+        { version: 2, entries: [entry] },
         published([{ url: entry.artifact.url, bytes }]),
       );
     }
@@ -1065,11 +1108,15 @@ describe("a listing", () => {
       });
 
     async function problemsOf(bytes, overrides, version = 2) {
-      const entry = pluginEntry(bytes, overrides);
-      return catalogProblems(
+      const entry = pluginEntry(
+        bytes,
+        version === 1 ? inVersion1(overrides) : overrides,
+      );
+      const problems = await catalogProblems(
         { version, entries: [entry] },
         published([{ url: entry.artifact.url, bytes }]),
       );
+      return version === 1 ? exceptProcessing(problems) : problems;
     }
 
     it("passes when the entry and the package both declare none", async () => {
@@ -1190,7 +1237,7 @@ describe("a listing", () => {
     });
     const entry = pluginEntry(withDependency);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: withDependency }]),
     );
     assert.equal(problems.length, 1);
@@ -1206,7 +1253,7 @@ describe("a listing", () => {
       const bytes = pluginArchive(packageJson);
       const entry = pluginEntry(bytes);
       const problems = await catalogProblems(
-        { version: 1, entries: [entry] },
+        { version: 2, entries: [entry] },
         published([{ url: entry.artifact.url, bytes }]),
       );
       assert.deepEqual(problems, [
@@ -1219,7 +1266,7 @@ describe("a listing", () => {
     const renamed = themeArchive({ ...THEME_MANIFEST, name: "other-theme" });
     const entry = themeEntry(renamed);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: renamed }]),
     );
     assert.equal(problems.length, 1);
@@ -1233,7 +1280,7 @@ describe("a listing", () => {
     const child = themeArchive({ ...THEME_MANIFEST, extends: "absent-theme" });
     const entry = themeEntry(child, { extends: "absent-theme" });
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: child }]),
     );
     assert.deepEqual(problems, [
@@ -1263,7 +1310,7 @@ describe("a listing", () => {
 
     it("passes when both pass", async () => {
       const problems = await catalogProblems(
-        { version: 1, entries: [themeEntry(theme), childEntry()] },
+        { version: 2, entries: [themeEntry(theme), childEntry()] },
         published([themeFile, childFile()]),
       );
       assert.deepEqual(problems, []);
@@ -1273,7 +1320,7 @@ describe("a listing", () => {
       const parent = themeEntry(theme);
       parent.artifact.bytes = theme.byteLength + 1;
       const problems = await catalogProblems(
-        { version: 1, entries: [parent, childEntry()] },
+        { version: 2, entries: [parent, childEntry()] },
         published([themeFile, childFile()]),
       );
       const own = problems.filter((problem) =>
@@ -1344,7 +1391,7 @@ describe("a listing", () => {
         const top = themeEntry(theme);
         top.artifact.bytes = theme.byteLength + 1;
         const problems = await catalogProblems(
-          { version: 1, entries: [top, childEntry(), grandchildEntry] },
+          { version: 2, entries: [top, childEntry(), grandchildEntry] },
           published([themeFile, childFile(), grandchildFile]),
         );
         assert.deepEqual(own(problems), [
@@ -1368,7 +1415,7 @@ describe("a listing", () => {
           },
         });
         const problems = await catalogProblems(
-          { version: 1, entries: [orphanEntry, grandchildEntry] },
+          { version: 2, entries: [orphanEntry, grandchildEntry] },
           published([
             { url: orphanEntry.artifact.url, bytes: orphan },
             grandchildFile,
@@ -1424,7 +1471,7 @@ describe("a listing", () => {
     });
     const entry = themeEntry(illegible);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes: illegible }]),
     );
     assert.ok(problems.length > 0);
@@ -1495,7 +1542,7 @@ describe("a listing from a release-only repository", () => {
       return false;
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [plugin, theme] },
+      { version: 2, entries: [plugin, theme] },
       deps,
     );
     assert.deepEqual(problems, []);
@@ -1520,7 +1567,7 @@ describe("a listing from a release-only repository", () => {
     const deps = published([file], { pin: PIN });
     deps.verifyAttestation = signedIn("example-private/occupancy");
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       deps,
     );
     assert.equal(problems.length, 1);
@@ -1535,7 +1582,7 @@ describe("a listing from a release-only repository", () => {
     const deps = published([file], { pin: PIN });
     deps.verifyAttestation = signedIn("example/openbrf-occupancy");
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       deps,
     );
     assert.deepEqual(problems, []);
@@ -1549,7 +1596,7 @@ describe("a listing from a release-only repository", () => {
       repository: "https://github.com/openbrf/example-plugin",
     });
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([file], {
         pin: encode({
           ...SOURCE,
@@ -1570,7 +1617,7 @@ describe("a listing from a release-only repository", () => {
       throw new Error("GitHub answered 503.");
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       deps,
     );
     assert.deepEqual(problems, [
@@ -1581,7 +1628,7 @@ describe("a listing from a release-only repository", () => {
   it("fails when its record is not the release repository's pin", async () => {
     const { entry, file } = withSource(SOURCE);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([file], {
         pin: encode({ ...SOURCE, commit: "f".repeat(40) }),
       }),
@@ -1596,7 +1643,7 @@ describe("a listing from a release-only repository", () => {
   it("fails when its record is the pin written another way", async () => {
     const { entry, file } = withSource(JSON.stringify(SOURCE, null, 2));
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([file], { pin: PIN }),
     );
     assert.equal(problems.length, 1, problems.join("\n"));
@@ -1606,7 +1653,7 @@ describe("a listing from a release-only repository", () => {
   it("fails when the release repository pins nothing at the attested commit", async () => {
     const { entry, file } = withSource(SOURCE);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([file]),
     );
     assert.deepEqual(problems, [
@@ -1616,7 +1663,7 @@ describe("a listing from a release-only repository", () => {
 
   it("fails when the release repository pins a source and the package has no record", async () => {
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin), themeEntry(theme)] },
+      { version: 2, entries: [pluginEntry(plugin), themeEntry(theme)] },
       published([pluginFile, themeFile], { pin: PIN }),
     );
     assert.deepEqual(problems, [
@@ -1635,7 +1682,7 @@ describe("a listing from a release-only repository", () => {
     deps.sourcePinAt = async (_owner, _repo, commit) =>
       commit === ON_MAIN ? PIN : encode({ ...SOURCE, commit: other });
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       deps,
     );
     assert.equal(problems.length, 1, problems.join("\n"));
@@ -1654,7 +1701,7 @@ describe("a listing from a release-only repository", () => {
         throw new Error("not asked at a malformed commit");
       };
       const problems = await catalogProblems(
-        { version: 1, entries: [entry] },
+        { version: 2, entries: [entry] },
         deps,
       );
       assert.equal(problems.length, 1, JSON.stringify(certificates));
@@ -1671,7 +1718,7 @@ describe("a listing from a release-only repository", () => {
       throw new Error("raw.githubusercontent.com answered 503.");
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.deepEqual(problems, [
@@ -1817,7 +1864,7 @@ describe("a listing from a release-only repository", () => {
       const { entry, file } = withSource(source);
       // The pin is the same bytes, so only the record's own rules refuse it.
       const problems = await catalogProblems(
-        { version: 1, entries: [entry] },
+        { version: 2, entries: [entry] },
         published([file], { pin: encode(source) }),
       );
       assert.equal(problems.length, 1, problems.join("\n"));
@@ -1845,7 +1892,7 @@ describe("a listing from a release-only repository", () => {
     };
     const { entry, file } = withSource(source);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([file], { pin: encode(source) }),
     );
     assert.deepEqual(problems, [
@@ -1859,7 +1906,7 @@ describe("a listing from a release-only repository", () => {
       throw new Error("first\r\n::error::second");
     };
     const problems = await catalogProblems(
-      { version: 1, entries: [pluginEntry(plugin)] },
+      { version: 2, entries: [pluginEntry(plugin)] },
       deps,
     );
     assert.deepEqual(problems, [
@@ -1872,7 +1919,7 @@ describe("a listing from a release-only repository", () => {
     const bytes = themeArchive(THEME_MANIFEST, { [SOURCE_FILE]: source });
     const entry = themeEntry(bytes);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       published([{ url: entry.artifact.url, bytes }], { pin: encode(source) }),
     );
     assert.equal(problems.length, 1, problems.join("\n"));
@@ -1968,7 +2015,7 @@ describe("a licensed plugin", () => {
       return encode(answer);
     };
     const problems = await catalogProblems(
-      { version: 1, entries: listed.map(({ entry }) => entry) },
+      { version: 2, entries: listed.map(({ entry }) => entry) },
       deps,
     );
     return knowsCatalogLicence
@@ -2014,7 +2061,7 @@ describe("a licensed plugin", () => {
     const deps = published([{ url: entry.artifact.url, bytes }]);
     deps.issuerDocumentAt = async () => encode(ISSUER);
     const problems = await catalogProblems(
-      { version: 1, entries: [entry] },
+      { version: 2, entries: [entry] },
       deps,
     );
     assert.equal(problems.length, 2, problems.join("\n"));
@@ -2451,11 +2498,15 @@ describe("a plugin's extension points", () => {
     });
 
   async function problemsOf(bytes, overrides, version = 2) {
-    const entry = pluginEntry(bytes, overrides);
-    return catalogProblems(
+    const entry = pluginEntry(
+      bytes,
+      version === 1 ? inVersion1(overrides) : overrides,
+    );
+    const problems = await catalogProblems(
       { version, entries: [entry] },
       published([{ url: entry.artifact.url, bytes }]),
     );
+    return version === 1 ? exceptProcessing(problems) : problems;
   }
 
   it("passes when the entry repeats the package's, in any order", async () => {
@@ -2615,12 +2666,13 @@ describe("a plugin's extends", () => {
     const entry = pluginEntry(bytes, {
       id: ADDON_ID,
       packageName: "@example/openbrf-occupancy-extra",
-      ...overrides,
+      ...(version === 1 ? inVersion1(overrides) : overrides),
     });
-    return catalogProblems(
+    const problems = await catalogProblems(
       { version, entries: [entry] },
       published([{ url: entry.artifact.url, bytes }]),
     );
+    return version === 1 ? exceptProcessing(problems) : problems;
   }
 
   it("passes when the entry repeats the package's, in any order", async () => {
@@ -2703,10 +2755,124 @@ describe("a plugin's extends", () => {
   it("does not take a theme's parent for an extension", async () => {
     assert.deepEqual(
       await catalogProblems(
-        { version: 1, entries: [themeEntry(theme)] },
+        { version: 2, entries: [themeEntry(theme)] },
         published([themeFile]),
       ),
       [],
+    );
+  });
+});
+
+describe("a plugin's processing", () => {
+  const processingPackage = (processing) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, processing },
+    });
+
+  async function problemsOf(bytes, overrides, version = 2) {
+    const entry = pluginEntry(bytes, overrides);
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's", async () => {
+    assert.deepEqual(await problemsOf(plugin, {}), []);
+  });
+
+  it("passes when the data subjects are in another order", async () => {
+    assert.deepEqual(
+      await problemsOf(plugin, {
+        processing: {
+          ...PROCESSING,
+          dataSubjects: [...PROCESSING.dataSubjects].reverse(),
+        },
+      }),
+      [],
+    );
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    const bytes = pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: {
+        ...PLUGIN_PACKAGE.openbrf,
+        permissions: [],
+        personalData: [],
+        processing: undefined,
+      },
+    });
+    assert.deepEqual(
+      await problemsOf(bytes, {
+        permissions: [],
+        personalData: [],
+        processing: undefined,
+      }),
+      [],
+    );
+  });
+
+  for (const [field, value] of [
+    ["purpose", { sv: "Något annat", en: "Something else" }],
+    ["retention", { sv: "Ett år", en: "One year" }],
+    ["dataSubjects", ["members"]],
+  ]) {
+    it(`fails when the entry states another ${field} than the package`, async () => {
+      const problems = await problemsOf(plugin, {
+        processing: { ...PROCESSING, [field]: value },
+      });
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(problems[0], /the entry's processing is /);
+    });
+  }
+
+  it("fails when the entry states another legal basis", async () => {
+    const problems = await problemsOf(plugin, {
+      processing: {
+        ...PROCESSING,
+        legalBasis: "contract",
+        legitimateInterest: undefined,
+      },
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the entry's processing is /);
+  });
+
+  it("fails when the entry states another legitimate interest", async () => {
+    const problems = await problemsOf(plugin, {
+      processing: {
+        ...PROCESSING,
+        legitimateInterest: { sv: "Något annat", en: "Something else" },
+      },
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the entry's processing is /);
+  });
+
+  it("fails when the package declares one and the entry says nothing", async () => {
+    const problems = await problemsOf(plugin, { processing: undefined });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /declares personal data declares its processing/);
+  });
+
+  it("fails when the entry declares one and the package does not", async () => {
+    const bytes = processingPackage(undefined);
+    const problems = await problemsOf(bytes, {});
+    assert.ok(
+      problems.some((problem) => /the package's is null/.test(problem)),
+      problems.join("\n"),
+    );
+  });
+
+  it("fails when an index of version 1 carries it", async () => {
+    const problems = await problemsOf(plugin, {}, 1);
+    assert.ok(
+      problems.some((problem) =>
+        /Unrecognized key: "processing"/.test(problem),
+      ),
+      problems.join("\n"),
     );
   });
 });
