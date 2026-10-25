@@ -1588,6 +1588,96 @@ describe("a listing from a release-only repository", () => {
     assert.deepEqual(problems, []);
   });
 
+  it("asks the release repository's default branch for the attested commit, never the source's", async () => {
+    const { entry, file } = withSource(SOURCE);
+    const deps = published([file], { pin: PIN });
+    const calls = [];
+    deps.defaultBranchHas = async (owner, repo, commit) => {
+      calls.push({ owner, repo, commit });
+      return { branch: "main", has: true };
+    };
+    const problems = await catalogProblems(
+      { version: 2, entries: [entry] },
+      deps,
+    );
+    assert.deepEqual(problems, []);
+    assert.deepEqual(calls, [
+      { owner: "example", repo: "openbrf-occupancy", commit: ON_MAIN },
+    ]);
+  });
+
+  // A tag push runs the release workflow as the tagged commit has it, so a
+  // tag off main can carry a release.yml without the workflow's checks, and
+  // that commit's own source.json, which the package copies, matches.
+  for (const [claim, certificates] of [
+    [
+      "the source",
+      [{ sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN }],
+    ],
+    ["the signing workflow", [{ buildSignerDigest: OFF_MAIN }]],
+    ["the run's configuration", [{ buildConfigDigest: OFF_MAIN }]],
+  ]) {
+    it(`fails when ${claim} was read at a commit the release repository's main does not have`, async () => {
+      const plugin = pluginEntry(releaseOnlyPlugin);
+      const theme = themeEntry(releaseOnlyTheme);
+      const deps = published(
+        [
+          { url: plugin.artifact.url, bytes: releaseOnlyPlugin },
+          { url: theme.artifact.url, bytes: releaseOnlyTheme },
+        ],
+        { pin: PIN, certificates },
+      );
+      const problems = await catalogProblems(
+        { version: 2, entries: [plugin, theme] },
+        deps,
+      );
+      assert.deepEqual(problems, [
+        `plugin occupancy 1.0.0: the artifact's build attestation names the commit ${OFF_MAIN}, which is not on main of example/openbrf-occupancy; release only what main has merged.`,
+        `theme example-theme 1.0.0: the artifact's build attestation names the commit ${OFF_MAIN}, which is not on main of example/example-theme; release only what main has merged.`,
+      ]);
+    });
+  }
+
+  it("does not read the pin at a commit the release repository's main does not have", async () => {
+    const { entry, file } = withSource(SOURCE);
+    const deps = published([file], {
+      pin: PIN,
+      certificates: [
+        { sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN },
+      ],
+    });
+    deps.sourcePinAt = async () => {
+      throw new Error("not asked at a commit off main");
+    };
+    deps.repositoryIsPublic = async () => {
+      throw new Error("not asked for a package built off main");
+    };
+    const problems = await catalogProblems(
+      { version: 2, entries: [entry] },
+      deps,
+    );
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /names the commit b{40}, which is not on main/);
+  });
+
+  it("fails when GitHub cannot say whether the release repository's main has the commit", async () => {
+    const { entry, file } = withSource(SOURCE);
+    const deps = published([file], { pin: PIN });
+    deps.defaultBranchHas = async () => {
+      throw new Error("GitHub answered 503.");
+    };
+    deps.sourcePinAt = async () => {
+      throw new Error("not asked before the branch answers");
+    };
+    const problems = await catalogProblems(
+      { version: 2, entries: [entry] },
+      deps,
+    );
+    assert.deepEqual(problems, [
+      `plugin occupancy 1.0.0: whether the attested commit ${ON_MAIN} is on the default branch could not be read: GitHub answered 503.`,
+    ]);
+  });
+
   // The attestation fixes the record without proving it, so a record naming
   // a public repository would borrow that repository's name.
   it("fails when the source it names is public", async () => {

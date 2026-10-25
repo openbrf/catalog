@@ -145,7 +145,12 @@ root, beside its `package.json` or `theme.json`:
 The check reads the release repository's `source.json` at the commit the
 attestation names as the source, and refuses the package unless its own
 `source.json` has the same bytes, or has none when the release repository pins
-none. It also refuses a record:
+none. It reads it only after every commit the attestation names is found on
+the release repository's default branch, as for any listing: a tag off that
+branch runs the release workflow as that commit has it, without the checks the
+default branch's workflow makes, and the package copies that commit's own
+`source.json`, so the byte comparison alone would accept it. It also refuses a
+record:
 
 - that is not a JSON object with exactly those two fields, each named once;
 - whose `repository` is not exactly `https://github.com/<owner>/<repository>`,
