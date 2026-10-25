@@ -1610,10 +1610,7 @@ describe("a listing from a release-only repository", () => {
   // tag off main can carry a release.yml without the workflow's checks, and
   // that commit's own source.json, which the package copies, matches.
   for (const [claim, certificates] of [
-    [
-      "the source",
-      [{ sourceRepositoryDigest: OFF_MAIN, buildSignerDigest: OFF_MAIN }],
-    ],
+    ["the source", [{ sourceRepositoryDigest: OFF_MAIN }]],
     ["the signing workflow", [{ buildSignerDigest: OFF_MAIN }]],
     ["the run's configuration", [{ buildConfigDigest: OFF_MAIN }]],
   ]) {

@@ -147,8 +147,8 @@ attestation names as the source, and refuses the package unless its own
 `source.json` has the same bytes, or has none when the release repository pins
 none. It reads it only after every commit the attestation names is found on
 the release repository's default branch, as for any listing: a tag off that
-branch runs the release workflow as that commit has it, without the checks the
-default branch's workflow makes, and the package copies that commit's own
+branch runs the release workflow as that commit has it, which can omit the checks
+the default branch's workflow makes, and the package copies that commit's own
 `source.json`, so the byte comparison alone would accept it. It also refuses a
 record:
 
