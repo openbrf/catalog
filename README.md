@@ -322,6 +322,11 @@ resident routes fail one of these is not listed:
 - what it hands a job: no person id the caller supplied;
 - what it leaves running: no listener or callback the handler sets up outlives
   its answer or uses a request other than its own;
+- how long it takes: it answers well within its deadline of four and a half
+  seconds, with no long-poll or wait on an event, and an outbound call such as
+  `recipients.fetch` carries a `timeoutMs` below the deadline, because a
+  resident who can make a handler hang can fail the plugin's board routes and
+  jobs whenever they like;
 - what the screen tells a resident before they act: what their neighbours will
   see of what they offer or claim.
 
