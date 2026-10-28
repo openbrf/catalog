@@ -477,7 +477,7 @@ describe("an index of version 1", () => {
 
   it("is refused under the name of the file it was read from", async () => {
     const problems = await catalogProblems(
-      { version: 3, entries: [] },
+      { version: 4, entries: [] },
       { ...published([]), indexName: "catalog-v2.json" },
     );
     assert.ok(problems.length > 0);
