@@ -87,7 +87,11 @@ A package is listed when:
   [below](#a-plugin-that-offers-or-extends-extension-points)), its
   processing declaration (whole, the categories of data subjects as a set: the consent screen
   shows it before anything is downloaded, and the install seeds the record of
-  processing activities from it), whether it is an
+  processing activities from it), the resident routes it declares (the board
+  consents to them before anything is downloaded: the sets of paths must be
+  equal, their order does not matter, and a plugin with none omits them on
+  both sides; the entry's title is the curator's text and is not compared with
+  the manifest's `titleKey`), whether it is an
   AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
