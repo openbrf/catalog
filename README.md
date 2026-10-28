@@ -89,8 +89,8 @@ A package is listed when:
   shows it before anything is downloaded, and the install seeds the record of
   processing activities from it), the resident routes it declares (the board
   consents to them before anything is downloaded: the sets of paths must be
-  equal, their order does not matter, and a plugin with none omits them on
-  both sides; the entry's title is the curator's text and is not compared with
+  equal, their order does not matter, and absent means none on both sides;
+  the entry's title is the curator's text and is not compared with
   the manifest's `titleKey`), whether it is an
   AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
