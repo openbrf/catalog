@@ -718,6 +718,17 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         extensionSet(entry.extends ?? []),
         extensionSet(manifest.extends ?? []),
       ],
+      // The board consents to the routes a resident may call without a board
+      // seat before anything is downloaded (ADR 0051), and the core refuses a
+      // route outside that consent. Only the paths are compared: the entry's
+      // title is the curator's text and the manifest's titleKey a key in the
+      // plugin's own namespace, which are not the same value. Absent is none
+      // on both sides: only version 3 of the index carries them.
+      [
+        "resident routes",
+        residentRoutePaths(entry.residentRoutes ?? []),
+        residentRoutePaths(manifest.residentRoutes ?? []),
+      ],
       // The board reads the processing a plugin declares on the consent screen
       // before anything is downloaded, and the install seeds the record of
       // processing activities from it (ADR 0035), so the entry repeats it
@@ -1093,6 +1104,11 @@ function pointSet(points) {
       canonical({ ...point, personalData: sorted(point.personalData) }),
     )
     .sort();
+}
+
+/** Resident routes compared as the set of their paths, which are exact. */
+function residentRoutePaths(routes) {
+  return routes.map(({ path }) => path).sort();
 }
 
 /** The extension points a plugin extends, compared as a set like the above. */
