@@ -15,38 +15,39 @@ it in three files, one for each version of the index:
 | [`catalog-v3.json`](catalog-v3.json) | 3 | `https://raw.githubusercontent.com/openbrf/catalog/main/catalog-v3.json` |
 
 An instance that reads version 1 keeps reading `catalog.json`. Version 2 adds
-five fields to a plugin entry, `deviceRoutes`
+six fields to a plugin entry, `deviceRoutes`
 ([ADR 0031](https://github.com/openbrf/openbrf/blob/main/docs/adr/0031-a-device-token-for-a-plugin-s-own-routes.md)),
 `recipients`
 ([ADR 0037](https://github.com/openbrf/openbrf/blob/main/docs/adr/0037-declared-outbound-hosts-and-secret-settings.md)),
 `extensionPoints` and `extends`
 ([ADR 0030](https://github.com/openbrf/openbrf/blob/main/docs/adr/0030-plugins-that-extend-plugins.md)),
-and `processing`
-([ADR 0035](https://github.com/openbrf/openbrf/blob/main/docs/adr/0035-a-plugin-s-processing-and-objecting-to-it.md)),
+`processing`
+([ADR 0035](https://github.com/openbrf/openbrf/blob/main/docs/adr/0035-a-plugin-s-processing-and-objecting-to-it.md))
+and `personRecords`
+([ADR 0047](https://github.com/openbrf/openbrf/blob/main/docs/adr/0047-a-plugin-s-records-about-a-person.md)),
 and changes nothing else. An instance refuses a version 1 index whole when an
 entry carries a field version 1 does not define, so a plugin entry that carries
-any of the five, an empty list included, is listed in `catalog-v2.json` only,
-and `catalog.json` carries none. (A theme's `extends`, the theme it inherits
+any of the six, an empty list included, is not listed in `catalog.json`, and
+is listed in `catalog-v2.json` and `catalog-v3.json`. (A theme's `extends`, the theme it inherits
 from, is a text that version 1 defines, and is listed in both files.) Every
 other entry is listed in both files, the same in both, so an instance that
 reads version 2 offers what one that reads version 1 does. A pull request that
-adds or changes an entry changes both files, or `catalog-v2.json` only for a
-plugin entry that carries `deviceRoutes`, `recipients`, `extensionPoints`, `extends` or
-`processing`. A plugin that declares personal data states its processing
-declaration, so such a plugin is listed in `catalog-v2.json` only, and an
+adds or changes an entry changes both files, or leaves `catalog.json` alone for
+a plugin entry that carries `deviceRoutes`, `recipients`, `extensionPoints`,
+`extends`, `processing` or `personRecords`. A plugin that declares personal data states its
+processing declaration, so such a plugin is not listed in `catalog.json`, and an
 instance that reads version 1 does not offer it.
 
-Version 3 adds `residentRoutes`
-([ADR 0051](https://github.com/openbrf/openbrf/blob/main/docs/adr/0051-resident-routes-in-a-plugin-that-reads-the-register.md))
-to a plugin entry and changes nothing else. An instance that reads version 2
-refuses a version 2 index whole when an entry carries it, so a plugin entry that
-carries `residentRoutes`, an empty list included, is listed in `catalog-v3.json`
-only, and `catalog-v2.json` carries none. Every other entry is listed in both,
-the same in both. A pull request that adds or changes an entry changes
-`catalog-v2.json` and `catalog-v3.json` (and `catalog.json` where version 1 can
-carry it), or `catalog-v3.json` only for a plugin entry that carries
-`residentRoutes`. No instance reads `catalog-v3.json` before its core has
-version 3's address built in.
+Version 3 adds one field to a plugin entry, `residentRoutes`
+([ADR 0051](https://github.com/openbrf/openbrf/blob/main/docs/adr/0051-resident-routes-in-a-plugin-that-reads-the-register.md)),
+and changes nothing else. An instance refuses a version 2 index whole when an
+entry carries it, so a plugin entry that carries `residentRoutes`, an empty list
+included, is listed in `catalog-v3.json` only, and `catalog-v2.json` carries
+none. Every other entry of `catalog-v2.json` is listed in `catalog-v3.json`, the
+same in both, so an instance that reads version 3 offers what one that reads
+version 2 does. No entry carries `residentRoutes` yet, so `catalog-v3.json` is
+`catalog-v2.json` with its version set to 3. A pull request that adds or changes
+an entry that `catalog-v2.json` lists changes `catalog-v3.json` the same way.
 
 ## What a listing must meet
 
@@ -88,7 +89,14 @@ A package is listed when:
   [below](#a-plugin-that-offers-or-extends-extension-points)), its
   processing declaration (whole, the categories of data subjects as a set: the consent screen
   shows it before anything is downloaded, and the install seeds the record of
-  processing activities from it), whether it is an
+  processing activities from it), the routes a device reaches with a token
+  (each one's id and path), its collections of records about a person (whole,
+  their categories and fields as sets: the consent screen shows each with its
+  categories and its bound before anything is downloaded), the resident routes it declares (the board
+  consents to them before anything is downloaded: the sets of paths must be
+  equal, their order does not matter, and absent means none on both sides;
+  the entry's title is the curator's text and is not compared with
+  the manifest's `titleKey`), whether it is an
   AI package, and the licence it reads with its release date; for a theme the
   name, version, contract and parent, the parent
   being the built-in theme or a theme in this index, and not deprecated unless
@@ -215,8 +223,8 @@ and a plugin can extend a point another plugin offers
 ([ADR 0030](https://github.com/openbrf/openbrf/blob/main/docs/adr/0030-plugins-that-extend-plugins.md)).
 Both are declared in the package's manifest, as `extensionPoints` and
 `extends`, and the board reads them on the consent screens before anything is
-downloaded, so the entry repeats them. A plugin that does either is listed in
-`catalog-v2.json` only.
+downloaded, so the entry repeats them. A plugin that does either is not listed in
+`catalog.json`.
 
 For a plugin that offers points, `extensionPoints` lists each one with the
 manifest's own fields and the curator's text:
@@ -290,12 +298,13 @@ files are not on the instance yet). A plugin that declares them is listed in
 
 The check holds the entry to the package: the paths are the same set, in any
 order. The title is the curator's text and is not compared. The index refuses
-an entry whose routes the manifest would refuse, by the same rule function
-(`residentRouteRuleIssues` in `@openbrf/plugin-sdk`): more than eight, two that
-overlap, one over `oauthProtectedResource`, and routes beside no address-book
-permission, a finance permission or an extension point. The rule on the board's
-section needs the view, which an entry does not carry, so it is applied when the
-check reads the package's own manifest.
+an entry whose routes the manifest would refuse, by the manifest's own rules
+(`declaredResidentRoutesSchema` and `residentRouteRuleIssues` in
+`@openbrf/plugin-sdk`): more than eight routes, two that overlap, one over
+`oauthProtectedResource`, and routes beside no address-book permission, a
+finance permission or an extension point. The rule on the board's section needs
+the view, which an entry does not carry, so it is applied when the check reads
+the package's own manifest.
 
 The reviewer reads each resident route's handler in the bundle beside what the
 board's consent covers (ADR 0051, "What catalog review reads"). A listing whose
@@ -367,11 +376,12 @@ whose index schema reads them, so a licensed plugin can be listed.
 ## How a listing is reviewed
 
 1. **Proposing.** Open a pull request that adds or changes one entry in
-   `catalog.json`, `catalog-v2.json` and `catalog-v3.json` (only in
-   `catalog-v2.json` and `catalog-v3.json` when a plugin entry carries
-   `deviceRoutes`, `recipients`, `extensionPoints`, `extends` or `processing`,
-   which need index version 2, and only in `catalog-v3.json` when it carries
-   `residentRoutes`, which needs version 3), and link the release it points at. A repository not yet in
+   `catalog.json`, in `catalog-v2.json` and in `catalog-v3.json` (not in
+   `catalog.json` when a plugin entry carries `deviceRoutes`, `recipients`,
+   `extensionPoints`, `extends`, `processing` or `personRecords`, which need
+   index version 2,
+   and in `catalog-v3.json` only when it carries `residentRoutes`, which needs
+   index version 3), and link the release it points at. A repository not yet in
    [`repositories.json`](repositories.json) is added there in the same pull
    request, with the ids GitHub gives it:
    `gh api repos/<owner>/<repo> --jq '{id: (.id | tostring), ownerId: (.owner.id | tostring)}'`.
@@ -380,10 +390,10 @@ whose index schema reads them, so a licensed plugin can be listed.
    `description` are the curator's text, in Swedish and English; the maintainers
    may rewrite them.
 2. **The check.** The `Listing checks` workflow runs on every pull request, on
-   every push to `main` and every night, on `catalog.json`, `catalog-v2.json`
-   and `catalog-v3.json`. It reads each index with the core's own schema, which
+   every push to `main` and every night, on `catalog.json`, `catalog-v2.json` and
+   `catalog-v3.json`. It reads each index with the core's own schema, which
    refuses a version 1 index in which a plugin entry carries `deviceRoutes`,
-   `recipients`, `extensionPoints`, `extends` or `processing` (a theme's `extends` is valid
+   `recipients`, `extensionPoints`, `extends`, `processing` or `personRecords` (a theme's `extends` is valid
    in both) and a version 2 index in which one carries `residentRoutes`, looks
    up the release, downloads the artifact, recomputes its digest and size, verifies its
    attestation and compares its certificate's claims, asks GitHub whether the
@@ -391,8 +401,8 @@ whose index schema reads them, so a licensed plugin can be listed.
    manifest with the entry, checks the package's `source.json` against the
    release repository's pin, reads a licensed plugin's issuer document and holds
    the plugin's key ids to the others in the index, then runs the package check or the install lint. When
-   two neighbouring files are checked, it also holds them to each other: every
-   entry that can be listed in the lower version is the same in both. The pull request
+   two neighbouring versions are checked, it also holds them to each other:
+   every entry that can be listed in the older version is the same in both. The pull request
    cannot merge until it passes.
    The schema and checks come from the `openbrf/openbrf` commit pinned as
    `CORE_REF` in the workflow.

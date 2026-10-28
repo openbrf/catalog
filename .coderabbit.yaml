@@ -2,11 +2,11 @@
 #
 # Schema: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
 #
-# Every instance reads catalog.json, catalog-v2.json or catalog-v3.json from
-# main and offers what it lists, and the check that decides what may be listed lives here too. So
-# this repository is a supply-chain gate, and the review is pointed at the two ways it can fail: a
-# listing that should not have passed, and a change to the check that lets the
-# next one pass. It follows the core repository's .coderabbit.yaml in
+# Every instance reads catalog.json, catalog-v2.json or catalog-v3.json from main
+# and offers what it lists, and the check that decides what may be listed lives
+# here too. So this repository is a supply-chain gate, and the review is pointed
+# at the two ways it can fail: a listing that should not have passed, and a
+# change to the check that lets the next one pass. It follows the core repository's .coderabbit.yaml in
 # openbrf/openbrf; where it differs, the comment says why. Most tools default
 # to on, so each one switched off carries its reason.
 
@@ -141,11 +141,13 @@ reviews:
 
         catalog.json is index version 1, catalog-v2.json is version 2 and
         catalog-v3.json is version 3. An entry that needs version 2 (a plugin
-        with deviceRoutes, recipients, extensionPoints, extends or processing,
-        an empty list included) is listed in catalog-v2.json and
-        catalog-v3.json only, and one that needs version 3 (a plugin with
-        residentRoutes, an empty list included) in catalog-v3.json only. Every
-        other entry is listed in all three, the same in each.
+        with deviceRoutes, recipients, extensionPoints, extends, processing or
+        personRecords, an empty list included) is not listed in catalog.json,
+        and an entry
+        that needs version 3 (a plugin with residentRoutes, an empty list
+        included) is listed in catalog-v3.json only. Every other entry is
+        listed in the files of every version that can carry it, the same in
+        each.
 
         For a plugin with residentRoutes, compare each route's curator title
         with what the route does for a resident, and flag a title that says
@@ -211,8 +213,7 @@ reviews:
       instructions: >-
         Every file needs a maintainer's review, the check included. Flag a
         change that leaves any path without an owner or that narrows the
-        owners of check/, catalog.json, catalog-v2.json, catalog-v3.json or the
-        workflow.
+        owners of check/, the catalog files or the workflow.
 
     - path: "**/*.md"
       instructions: >-

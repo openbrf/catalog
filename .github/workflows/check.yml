@@ -1,8 +1,9 @@
 name: Check
 
-# Every instance reads one of catalog.json, catalog-v2.json and catalog-v3.json
-# (by the index version it reads) from main and offers what it lists, so every
-# change to any of them passes the listing checks before it merges. The nightly run catches a
+# Every instance reads catalog.json (or catalog-v2.json or catalog-v3.json, from
+# an instance that reads index version 2 or 3) from main and offers what it
+# lists, so every change to any of them passes the listing checks before it
+# merges. The nightly run catches a
 # listing that stopped passing after it merged: a release taken down, an
 # artifact that no longer matches.
 on:
@@ -65,7 +66,7 @@ jobs:
       - name: Test the checks
         run: node --test check/
 
-      - name: Check the index files
+      - name: Check catalog.json, catalog-v2.json and catalog-v3.json
         env:
           GH_TOKEN: ${{ github.token }}
         run: node check/cli.mjs

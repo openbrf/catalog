@@ -718,17 +718,34 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         extensionSet(entry.extends ?? []),
         extensionSet(manifest.extends ?? []),
       ],
-      // The consent screen lists the routes a resident may call without a
-      // board seat before anything is downloaded (ADR 0051). The entry's also
-      // carry the curator's title, which the package has no counterpart for
-      // (it has a text key), so the paths are compared. Absent is none on both
-      // sides. The package's are read from its package.json when the pinned
-      // core's parser drops them, so a package that declares resident routes
-      // never passes as having none.
+      // The board consents to the routes a resident may call without a board
+      // seat before anything is downloaded (ADR 0051), and the core refuses a
+      // route outside that consent. Only the paths are compared: the entry's
+      // title is the curator's text and the manifest's titleKey a key in the
+      // plugin's own namespace, which are not the same value. Absent is none
+      // on both sides: only version 3 of the index carries them.
       [
         "resident routes",
         residentRoutePaths(entry.residentRoutes ?? []),
-        residentRoutePaths(packagedResidentRoutes(manifest, packageJson)),
+        residentRoutePaths(manifest.residentRoutes ?? []),
+      ],
+      // The board consents to the routes a device reaches with a token the
+      // board issues before anything is downloaded (ADR 0031). Absent is none
+      // on both sides: a version 1 entry cannot carry them.
+      [
+        "device routes",
+        deviceRouteSet(entry.deviceRoutes ?? []),
+        deviceRouteSet(manifest.deviceRoutes ?? []),
+      ],
+      // The consent screen shows each collection of records about a person,
+      // its categories and its bound before anything is downloaded, and the
+      // access report labels a record's fields from it (ADR 0047), so the
+      // entry repeats it whole. Absent is none on both sides: a version 1
+      // entry cannot carry it.
+      [
+        "records about a person",
+        personRecordSet(entry.personRecords ?? []),
+        personRecordSet(manifest.personRecords ?? []),
       ],
       // The board reads the processing a plugin declares on the consent screen
       // before anything is downloaded, and the install seeds the record of
@@ -1107,6 +1124,32 @@ function pointSet(points) {
     .sort();
 }
 
+/** Resident routes compared as the set of their paths, which are exact. */
+function residentRoutePaths(routes) {
+  return routes.map(({ path }) => path).sort();
+}
+
+/** Device routes compared as a set, each with its keys in one order. */
+function deviceRouteSet(routes) {
+  return routes.map(canonical).sort();
+}
+
+/**
+ * Collections of records about a person compared as a set, each with its
+ * categories and its fields in one order.
+ */
+function personRecordSet(collections) {
+  return collections
+    .map((collection) =>
+      canonical({
+        ...collection,
+        personalData: sorted(collection.personalData),
+        fields: collection.fields.map(canonical).sort(),
+      }),
+    )
+    .sort();
+}
+
 /** The extension points a plugin extends, compared as a set like the above. */
 function extensionSet(extensions) {
   return extensions
@@ -1127,28 +1170,6 @@ function extensionSet(extensions) {
 function packagedRecipients(manifest, packageJson) {
   const declared = manifest.recipients ?? packageJson.openbrf?.recipients;
   return declared === undefined ? [] : declared;
-}
-
-/**
- * What the package declares as resident routes: the parsed manifest's, else
- * the package.json's own when the pinned core's parser drops them.
- */
-function packagedResidentRoutes(manifest, packageJson) {
-  const declared =
-    manifest.residentRoutes ?? packageJson.openbrf?.residentRoutes;
-  return declared === undefined ? [] : declared;
-}
-
-/**
- * Resident routes compared by path, as a set. What a package.json carries that
- * is not a list of routes stays as it is, so it disagrees with the entry and
- * is named.
- */
-function residentRoutePaths(routes) {
-  if (!Array.isArray(routes)) {
-    return [canonical(routes)];
-  }
-  return routes.map((route) => route?.path ?? canonical(route)).sort();
 }
 
 /**

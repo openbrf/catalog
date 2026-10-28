@@ -1,9 +1,8 @@
 /**
  * Checks the catalog's index files, catalog.json (index version 1),
  * catalog-v2.json (version 2) and catalog-v3.json (version 3), against every
- * rule a listing must meet, over the
- * network: the release each artifact is on, the artifact's bytes and its build
- * attestation, whether the commits that attestation names are on the
+ * rule a listing must meet, over the network: the release each artifact is on,
+ * the artifact's bytes and its build attestation, whether the commits that attestation names are on the
  * repository's default branch, for a release-only listing whether the source
  * it names is public and what its release repository pins, and for a licensed
  * plugin what its issuer publishes.
@@ -330,24 +329,28 @@ for (const indexPath of indexPaths) {
   }
 }
 
-// Each file carries the entries of the one below it wherever that can read
-// them, so a pair that passed one by one is still held to that when both were
-// checked.
-for (const [lower, higher, problemsOf] of [
-  ["catalog.json", "catalog-v2.json", indexFileProblems],
-  ["catalog-v2.json", "catalog-v3.json", indexFileProblemsV3],
+// The files carry the same entries wherever the older version can, so a pair
+// that passed one by one is still held to that when both were checked.
+const version1 = passedIndexes.get("catalog.json");
+const version2 = passedIndexes.get("catalog-v2.json");
+const version3 = passedIndexes.get("catalog-v3.json");
+for (const [older, newer, pairProblemsOf, names] of [
+  [version1, version2, indexFileProblems, "catalog.json and catalog-v2.json"],
+  [
+    version2,
+    version3,
+    indexFileProblemsV3,
+    "catalog-v2.json and catalog-v3.json",
+  ],
 ]) {
-  const lowerIndex = passedIndexes.get(lower);
-  const higherIndex = passedIndexes.get(higher);
-  if (lowerIndex === undefined || higherIndex === undefined) {
-    continue;
-  }
-  const problems = problemsOf(lowerIndex.entries, higherIndex.entries);
-  if (problems.length > 0) {
-    console.error(`${lower} and ${higher} do not agree:\n`);
-    for (const problem of problems) {
-      console.error(`  - ${problem}`);
+  if (older !== undefined && newer !== undefined) {
+    const problems = pairProblemsOf(older.entries, newer.entries);
+    if (problems.length > 0) {
+      console.error(`${names} do not agree:\n`);
+      for (const problem of problems) {
+        console.error(`  - ${problem}`);
+      }
+      process.exitCode = 1;
     }
-    process.exitCode = 1;
   }
 }
