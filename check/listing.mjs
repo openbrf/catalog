@@ -718,6 +718,18 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         extensionSet(entry.extends ?? []),
         extensionSet(manifest.extends ?? []),
       ],
+      // The consent screen lists the routes a resident may call without a
+      // board seat before anything is downloaded (ADR 0051). The entry's also
+      // carry the curator's title, which the package has no counterpart for
+      // (it has a text key), so the paths are compared. Absent is none on both
+      // sides. The package's are read from its package.json when the pinned
+      // core's parser drops them, so a package that declares resident routes
+      // never passes as having none.
+      [
+        "resident routes",
+        residentRoutePaths(entry.residentRoutes ?? []),
+        residentRoutePaths(packagedResidentRoutes(manifest, packageJson)),
+      ],
       // The board reads the processing a plugin declares on the consent screen
       // before anything is downloaded, and the install seeds the record of
       // processing activities from it (ADR 0035), so the entry repeats it
@@ -1115,6 +1127,28 @@ function extensionSet(extensions) {
 function packagedRecipients(manifest, packageJson) {
   const declared = manifest.recipients ?? packageJson.openbrf?.recipients;
   return declared === undefined ? [] : declared;
+}
+
+/**
+ * What the package declares as resident routes: the parsed manifest's, else
+ * the package.json's own when the pinned core's parser drops them.
+ */
+function packagedResidentRoutes(manifest, packageJson) {
+  const declared =
+    manifest.residentRoutes ?? packageJson.openbrf?.residentRoutes;
+  return declared === undefined ? [] : declared;
+}
+
+/**
+ * Resident routes compared by path, as a set. What a package.json carries that
+ * is not a list of routes stays as it is, so it disagrees with the entry and
+ * is named.
+ */
+function residentRoutePaths(routes) {
+  if (!Array.isArray(routes)) {
+    return [canonical(routes)];
+  }
+  return routes.map((route) => route?.path ?? canonical(route)).sort();
 }
 
 /**

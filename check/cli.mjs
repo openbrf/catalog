@@ -1,6 +1,7 @@
 /**
- * Checks the catalog's index files, catalog.json (index version 1) and
- * catalog-v2.json (version 2), against every rule a listing must meet, over the
+ * Checks the catalog's index files, catalog.json (index version 1),
+ * catalog-v2.json (version 2) and catalog-v3.json (version 3), against every
+ * rule a listing must meet, over the
  * network: the release each artifact is on, the artifact's bytes and its build
  * attestation, whether the commits that attestation names are on the
  * repository's default branch, for a release-only listing whether the source
@@ -9,7 +10,8 @@
  *
  *   node check/cli.mjs [--pins repositories.json] [index.json ...]
  *
- * With no index named, both catalog.json and catalog-v2.json are checked.
+ * With no index named, catalog.json, catalog-v2.json and catalog-v3.json are
+ * checked.
  *
  * Reads the index schema and the package checks from a checkout of
  * openbrf/openbrf with its plugin-sdk and theme-tools built, at `.core` or
@@ -24,7 +26,7 @@ import { promisify } from "node:util";
 
 import { defaultBranchChecker } from "./branch.mjs";
 import { sdk, themeTools } from "./core.mjs";
-import { indexFileProblems } from "./index-files.mjs";
+import { indexFileProblems, indexFileProblemsV3 } from "./index-files.mjs";
 import { readJson } from "./json-file.mjs";
 import {
   SOURCE_FILE,
@@ -35,12 +37,13 @@ import {
 const run = promisify(execFile);
 
 /** The index files this repository publishes, one for each index version. */
-const INDEX_FILES = ["catalog.json", "catalog-v2.json"];
+const INDEX_FILES = ["catalog.json", "catalog-v2.json", "catalog-v3.json"];
 
 /** The index version each of those files must carry. */
 const INDEX_VERSIONS = new Map([
   ["catalog.json", 1],
   ["catalog-v2.json", 2],
+  ["catalog-v3.json", 3],
 ]);
 
 const args = process.argv.slice(2);
@@ -327,14 +330,21 @@ for (const indexPath of indexPaths) {
   }
 }
 
-// The two files carry the same entries wherever version 1 can, so a pair that
-// passed one by one is still held to that when both were checked.
-const version1 = passedIndexes.get("catalog.json");
-const version2 = passedIndexes.get("catalog-v2.json");
-if (version1 !== undefined && version2 !== undefined) {
-  const problems = indexFileProblems(version1.entries, version2.entries);
+// Each file carries the entries of the one below it wherever that can read
+// them, so a pair that passed one by one is still held to that when both were
+// checked.
+for (const [lower, higher, problemsOf] of [
+  ["catalog.json", "catalog-v2.json", indexFileProblems],
+  ["catalog-v2.json", "catalog-v3.json", indexFileProblemsV3],
+]) {
+  const lowerIndex = passedIndexes.get(lower);
+  const higherIndex = passedIndexes.get(higher);
+  if (lowerIndex === undefined || higherIndex === undefined) {
+    continue;
+  }
+  const problems = problemsOf(lowerIndex.entries, higherIndex.entries);
   if (problems.length > 0) {
-    console.error("catalog.json and catalog-v2.json do not agree:\n");
+    console.error(`${lower} and ${higher} do not agree:\n`);
     for (const problem of problems) {
       console.error(`  - ${problem}`);
     }

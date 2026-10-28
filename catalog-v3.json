@@ -1,0 +1,86 @@
+{
+  "version": 3,
+  "entries": [
+    {
+      "type": "plugin",
+      "id": "occupancy",
+      "version": "0.2.0",
+      "name": {
+        "sv": "Beläggning (exempeltillägg)",
+        "en": "Occupancy (example plugin)"
+      },
+      "description": {
+        "sv": "Referenstillägget för Open BRF: hur många lägenheter, boende och medlemmar föreningen har, och vilka lägenheter som saknar boende som tillägget kan se.",
+        "en": "The reference plugin for Open BRF: how many apartments, residents and members the association has, and which apartments have no resident the plugin can see."
+      },
+      "homepage": "https://github.com/openbrf/example-plugin",
+      "packageName": "@openbrf/example-plugin",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "residency"
+      ],
+      "actions": [
+        {
+          "id": "summary",
+          "capability": "addressBook:read",
+          "effect": "read",
+          "personalData": [],
+          "surfaces": [
+            "ui",
+            "mcp"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa styrelsen hur många lägenheter, boende och medlemmar föreningen har, och hur många boende och bostadsrättshavare varje lägenhet har, räknat bland de boende som tillägget kan se. Inga namn visas.",
+          "en": "Show the board how many apartments, residents and members the association has, and how many residents and tenant-owners each apartment has, counting only the residents the plugin can see. No names are shown."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Styrelsens behov av en överblick över boendet för att förvalta föreningen.",
+          "en": "The board's need for an overview of who lives in the building in order to run the association."
+        },
+        "retention": {
+          "sv": "Ingenting sparas: uppgifterna läses ur registret varje gång vyn visas.",
+          "en": "Nothing is kept: the data is read from the register each time the view is shown."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/example-plugin/releases/download/v0.2.0/openbrf-example-plugin-0.2.0.tgz",
+        "sha512": "sha512-B1h6/0WNUMc6DRNQcOp0W4H2DeSuz/WGaehr1odPwJJ8FI15Wh5JeKZ2ZTdK5mq/y51szCIXOC2yGZbIc30dgw==",
+        "bytes": 74269
+      }
+    },
+    {
+      "type": "theme",
+      "id": "example-theme",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Exempeltema",
+        "en": "Example theme"
+      },
+      "description": {
+        "sv": "Ett tema som ärver standardtemat, byter förtroendeaccenten till grönt och har en egen typsnittsfil.",
+        "en": "A theme that inherits the default and changes the trust accent to green, bundling its own typeface."
+      },
+      "homepage": "https://github.com/openbrf/example-theme",
+      "contract": "^1.0.0",
+      "extends": "porttavlan",
+      "artifact": {
+        "url": "https://github.com/openbrf/example-theme/releases/download/v0.1.0/example-theme-0.1.0.tgz",
+        "sha512": "sha512-wI0wbPu+FVGzywsaHK3/GqbMyo2xGR2FPW/qiUEl+gsHyzms6e9vZ11Q8tiqQCl+US2o0hArLpOWK9Lzq3uZJQ==",
+        "bytes": 40361
+      }
+    }
+  ]
+}

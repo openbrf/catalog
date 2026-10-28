@@ -9,7 +9,12 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { sdk, themeTools } from "./core.mjs";
-import { indexFileProblems, needsVersion2 } from "./index-files.mjs";
+import {
+  indexFileProblems,
+  indexFileProblemsV3,
+  needsVersion2,
+  needsVersion3,
+} from "./index-files.mjs";
 import {
   ISSUER_FORMAT,
   RELEASE_WORKFLOW,
@@ -330,6 +335,29 @@ describe("the index files in this repository", () => {
       [],
     );
   });
+
+  it("catalog-v3.json is an index of version 3 the instance reads", () => {
+    const index = read("catalog-v3.json");
+    assert.equal(index.version, 3);
+    const parsed = sdk.parseCatalogIndex(index);
+    assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
+  it("catalog-v2.json carries nothing that needs version 3", () => {
+    for (const entry of read("catalog-v2.json").entries) {
+      assert.equal(needsVersion3(entry), false, `${entry.id}`);
+    }
+  });
+
+  it("catalog-v2.json and catalog-v3.json agree", () => {
+    assert.deepEqual(
+      indexFileProblemsV3(
+        read("catalog-v2.json").entries,
+        read("catalog-v3.json").entries,
+      ),
+      [],
+    );
+  });
 });
 
 describe("the two index files, side by side", () => {
@@ -432,6 +460,66 @@ describe("the two index files, side by side", () => {
   });
 });
 
+describe("the version 2 and version 3 index files, side by side", () => {
+  const ordinary = { id: "occupancy", version: "1.0.0" };
+  const residentRoutes = [
+    { path: "offers", title: { sv: "Erbjud", en: "Offer" } },
+  ];
+
+  it("accept an ordinary entry listed the same in both", () => {
+    assert.deepEqual(indexFileProblemsV3([ordinary], [ordinary]), []);
+  });
+
+  for (const [why, extra] of [
+    ["residentRoutes", { residentRoutes }],
+    ["empty residentRoutes", { residentRoutes: [] }],
+    ["residentRoutes and processing", { residentRoutes, processing: {} }],
+  ]) {
+    it(`accept an entry with ${why} listed in version 3 only`, () => {
+      assert.equal(needsVersion3({ ...ordinary, ...extra }), true);
+      assert.deepEqual(
+        indexFileProblemsV3([], [{ ...ordinary, ...extra }]),
+        [],
+      );
+    });
+
+    it(`refuse an entry with ${why} listed in version 2`, () => {
+      const entry = { ...ordinary, ...extra };
+      assert.deepEqual(indexFileProblemsV3([entry], [entry]), [
+        "catalog-v2.json lists occupancy, which needs version 3 of the index",
+      ]);
+    });
+  }
+
+  // A theme has no resident routes, whatever else it carries.
+  it("do not read a theme as needing version 3", () => {
+    assert.equal(
+      needsVersion3({ type: "theme", id: "t", residentRoutes }),
+      false,
+    );
+  });
+
+  it("refuse an ordinary entry that version 3 leaves out", () => {
+    assert.deepEqual(indexFileProblemsV3([ordinary], []), [
+      "catalog-v3.json does not list occupancy the same as catalog-v2.json",
+    ]);
+  });
+
+  it("refuse an ordinary entry that version 3 lists differently", () => {
+    const changed = { ...ordinary, version: "1.1.0" };
+    assert.deepEqual(indexFileProblemsV3([ordinary], [changed]), [
+      "catalog-v3.json does not list occupancy the same as catalog-v2.json",
+      "catalog-v3.json lists occupancy, which catalog-v2.json does not list the same, and which does not need version 3",
+    ]);
+  });
+
+  it("refuse an entry listed in version 3 only that does not need it", () => {
+    assert.deepEqual(indexFileProblemsV3([], [ordinary]), [
+      "catalog-v3.json lists occupancy, which catalog-v2.json does not list the same, and which does not need version 3",
+    ]);
+  });
+});
+
 describe("an index of version 1", () => {
   const deviceRoutes = [{ id: "screen", path: "screen" }];
   // A device is a screen anyone passing reads, so the plugin reads no register.
@@ -477,7 +565,7 @@ describe("an index of version 1", () => {
 
   it("is refused under the name of the file it was read from", async () => {
     const problems = await catalogProblems(
-      { version: 3, entries: [] },
+      { version: 4, entries: [] },
       { ...published([]), indexName: "catalog-v2.json" },
     );
     assert.ok(problems.length > 0);
@@ -2961,5 +3049,186 @@ describe("a plugin's processing", () => {
       ),
       problems.join("\n"),
     );
+  });
+});
+
+describe("a plugin's resident routes", () => {
+  const OFFERS = { path: "offers", titleKey: "residentRoutes.offers" };
+  const CLAIMS = { path: "claims", titleKey: "residentRoutes.claims" };
+  const listed = ({ path }) => ({
+    path,
+    title: { sv: `Svenska ${path}`, en: `English ${path}` },
+  });
+
+  const routesPackage = (residentRoutes, openbrf = {}) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, residentRoutes, ...openbrf },
+    });
+
+  async function problemsOf(bytes, overrides, version = 3) {
+    const entry = pluginEntry(bytes, overrides);
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's paths, in any order", async () => {
+    assert.deepEqual(
+      await problemsOf(routesPackage([OFFERS, CLAIMS]), {
+        residentRoutes: [listed(CLAIMS), listed(OFFERS)],
+      }),
+      [],
+    );
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    assert.deepEqual(await problemsOf(plugin, { residentRoutes: [] }), []);
+    assert.deepEqual(await problemsOf(plugin, {}), []);
+  });
+
+  it("fails when the package declares one the entry leaves out", async () => {
+    const problems = await problemsOf(routesPackage([OFFERS, CLAIMS]), {
+      residentRoutes: [listed(OFFERS)],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's resident routes is \["offers"\], the package's is \["claims","offers"\]/,
+    );
+  });
+
+  it("fails when the package declares some and the entry says nothing", async () => {
+    const problems = await problemsOf(routesPackage([OFFERS]), {});
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's resident routes is \[\], the package's is \["offers"\]/,
+    );
+  });
+
+  it("fails when the entry declares one the package does not", async () => {
+    const problems = await problemsOf(plugin, {
+      residentRoutes: [listed(OFFERS)],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's resident routes is \["offers"\], the package's is \[\]\.$/,
+    );
+  });
+
+  it("fails when the entry names another path than the package", async () => {
+    const problems = await problemsOf(routesPackage([OFFERS]), {
+      residentRoutes: [listed({ path: "offer" })],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the entry's resident routes is /);
+  });
+
+  it("does not hold the curator's title to the package's text key", async () => {
+    assert.deepEqual(
+      await problemsOf(routesPackage([OFFERS]), {
+        residentRoutes: [
+          { path: "offers", title: { sv: "Något annat", en: "Another" } },
+        ],
+      }),
+      [],
+    );
+  });
+
+  for (const [why, route] of [
+    ["no title", { path: "offers" }],
+    ["a title without Swedish", { path: "offers", title: { en: "Offer" } }],
+    ["a title without English", { path: "offers", title: { sv: "Erbjud" } }],
+    ["a text key instead of a title", OFFERS],
+  ]) {
+    it(`fails when the entry gives a route ${why}`, async () => {
+      const problems = await problemsOf(routesPackage([OFFERS]), {
+        residentRoutes: [route],
+      });
+      assert.notDeepEqual(problems, []);
+      assert.ok(
+        problems.every((problem) =>
+          problem.includes("catalog.json: entries.0.residentRoutes.0"),
+        ),
+        problems.join("\n"),
+      );
+    });
+  }
+
+  // The manifest's rule function judges the entry as it does the manifest, so
+  // an entry the loader would refuse is never offered for consent.
+  for (const [why, overrides] of [
+    [
+      "overlap",
+      { residentRoutes: [OFFERS, { ...OFFERS, path: "offers/mine" }] },
+    ],
+    [
+      "sit beside no address-book permission",
+      { permissions: [], personalData: [], processing: undefined },
+    ],
+    [
+      "sit beside a finance permission",
+      { permissions: ["addressBook:read", "finances:read"] },
+    ],
+    ["cover the protected resource", { oauthProtectedResource: "offers/mcp" }],
+  ]) {
+    it(`fails when the routes ${why}`, async () => {
+      const routes = overrides.residentRoutes ?? [OFFERS];
+      const problems = await problemsOf(routesPackage(routes, overrides), {
+        ...overrides,
+        residentRoutes: routes.map(listed),
+      });
+      assert.ok(
+        problems.some((problem) => problem.includes("residentRoutes")),
+        problems.join("\n"),
+      );
+    });
+  }
+
+  it("fails when more than eight are declared", async () => {
+    const routes = Array.from({ length: 9 }, (_, index) => ({
+      path: `r${String(index)}`,
+      titleKey: `residentRoutes.r${String(index)}`,
+    }));
+    const problems = await problemsOf(routesPackage(routes), {
+      residentRoutes: routes.map(listed),
+    });
+    assert.ok(
+      problems.some((problem) => problem.includes("residentRoutes")),
+      problems.join("\n"),
+    );
+  });
+
+  // An entry carries no view, so the rule on the board's section is this check
+  // of the package's own manifest.
+  it("fails when the package declares them beside a view in the board section", async () => {
+    const bytes = routesPackage([OFFERS], {
+      view: { module: "./View", titleKey: "view.title", section: "board" },
+    });
+    const problems = await problemsOf(bytes, {
+      residentRoutes: [listed(OFFERS)],
+    });
+    assert.notDeepEqual(problems, []);
+  });
+
+  it("fails when an index of version 2 carries them", async () => {
+    const problems = await problemsOf(
+      routesPackage([OFFERS]),
+      { residentRoutes: [listed(OFFERS)] },
+      2,
+    );
+    assert.ok(
+      problems.some((problem) => problem.includes("residentRoutes")),
+      problems.join("\n"),
+    );
+  });
+
+  it("fails when an index of version 2 lists a plugin that declares them", async () => {
+    const problems = await problemsOf(routesPackage([OFFERS]), {}, 2);
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the package's is \["offers"\]/);
   });
 });
