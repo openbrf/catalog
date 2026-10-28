@@ -2,11 +2,11 @@
 #
 # Schema: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
 #
-# Every instance reads catalog.json or catalog-v2.json from main and offers what
-# it lists, and the check that decides what may be listed lives here too. So
-# this repository is a supply-chain gate, and the review is pointed at the two ways it can fail: a
-# listing that should not have passed, and a change to the check that lets the
-# next one pass. It follows the core repository's .coderabbit.yaml in
+# Every instance reads catalog.json, catalog-v2.json or catalog-v3.json from main
+# and offers what it lists, and the check that decides what may be listed lives
+# here too. So this repository is a supply-chain gate, and the review is pointed
+# at the two ways it can fail: a listing that should not have passed, and a
+# change to the check that lets the next one pass. It follows the core repository's .coderabbit.yaml in
 # openbrf/openbrf; where it differs, the comment says why. Most tools default
 # to on, so each one switched off carries its reason.
 
@@ -46,7 +46,7 @@ reviews:
     # requests that carry code. The schema matches a keyword anywhere in the
     # title, case-insensitively, so these catch "docs: ..." and
     # "docs(scope): ...". A pull request that changes catalog.json,
-    # catalog-v2.json or the check must not use the docs type.
+    # catalog-v2.json, catalog-v3.json or the check must not use the docs type.
     ignore_title_keywords:
       - "docs:"
       - "docs("
@@ -119,7 +119,7 @@ reviews:
         docs/plugin-contract.md of openbrf/openbrf. When README.md and the
         check disagree, that is a finding: one of them is wrong.
 
-    - path: "{catalog,catalog-v2}.json"
+    - path: "{catalog,catalog-v2,catalog-v3}.json"
       instructions: >-
         Each entry is a listing, read by every instance with parseCatalogIndex
         from @openbrf/plugin-sdk. The Listing checks workflow verifies the
@@ -139,11 +139,15 @@ reviews:
         both Swedish and English. Flag one that is missing a language, or one
         that promises more than the declaration allows.
 
-        catalog.json is index version 1 and catalog-v2.json is version 2. An
-        entry that needs version 2 (a plugin with deviceRoutes, recipients,
-        extensionPoints, extends or processing, an empty list included) is
-        listed in catalog-v2.json only, and every other entry is listed in
-        both, the same in both.
+        catalog.json is index version 1, catalog-v2.json is version 2 and
+        catalog-v3.json is version 3. An entry that needs version 2 (a plugin
+        with deviceRoutes, recipients, extensionPoints, extends, processing or
+        personRecords, an empty list included) is not listed in catalog.json,
+        and an entry
+        that needs version 3 (a plugin with residentRoutes, an empty list
+        included) is listed in catalog-v3.json only. Every other entry is
+        listed in the files of every version that can carry it, the same in
+        each.
 
         Removing an entry takes the package away from new installs and leaves
         existing ones without updates; "deprecated": true keeps existing
@@ -204,7 +208,7 @@ reviews:
       instructions: >-
         Every file needs a maintainer's review, the check included. Flag a
         change that leaves any path without an owner or that narrows the
-        owners of check/, catalog.json, catalog-v2.json or the workflow.
+        owners of check/, the catalog files or the workflow.
 
     - path: "**/*.md"
       instructions: >-
