@@ -18,6 +18,7 @@ export const VERSION_2_FIELDS = [
   "extensionPoints",
   "extends",
   "processing",
+  "personRecords",
 ];
 
 /**

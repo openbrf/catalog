@@ -141,8 +141,9 @@ reviews:
 
         catalog.json is index version 1, catalog-v2.json is version 2 and
         catalog-v3.json is version 3. An entry that needs version 2 (a plugin
-        with deviceRoutes, recipients, extensionPoints, extends or processing,
-        an empty list included) is not listed in catalog.json, and an entry
+        with deviceRoutes, recipients, extensionPoints, extends, processing or
+        personRecords, an empty list included) is not listed in catalog.json,
+        and an entry
         that needs version 3 (a plugin with residentRoutes, an empty list
         included) is listed in catalog-v3.json only. Every other entry is
         listed in the files of every version that can carry it, the same in

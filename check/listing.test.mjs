@@ -352,6 +352,8 @@ describe("the two index files, side by side", () => {
     ["extends", { extends: [{ plugin: "occupancy", point: "cards" }] }],
     ["empty extends", { extends: [] }],
     ["processing", { processing: { dataSubjects: ["members"] } }],
+    ["personRecords", { personRecords: [{ collection: "claims" }] }],
+    ["empty personRecords", { personRecords: [] }],
   ]) {
     it(`accept an entry with ${why} listed in version 2 only`, () => {
       assert.equal(needsVersion2({ ...ordinary, ...extra }), true);
@@ -3065,4 +3067,157 @@ describe("a plugin's resident routes", () => {
       problems.join("\n"),
     );
   });
+});
+
+describe("a plugin's device routes", () => {
+  const SCREEN = { id: "screen", path: "screen" };
+  const DOOR = { id: "door", path: "door" };
+  // A plugin with a device route reads nothing from the register (ADR 0031).
+  const UNREAD = { permissions: [], personalData: [], processing: undefined };
+
+  const devicePackage = (deviceRoutes) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, ...UNREAD, deviceRoutes },
+    });
+
+  async function problemsOf(bytes, overrides, version = 2) {
+    const entry = pluginEntry(bytes, { ...UNREAD, ...overrides });
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's, in any order", async () => {
+    const bytes = devicePackage([SCREEN, DOOR]);
+    assert.deepEqual(
+      await problemsOf(bytes, { deviceRoutes: [DOOR, SCREEN] }),
+      [],
+    );
+  });
+
+  it("fails when the package declares one and the entry says nothing", async () => {
+    for (const overrides of [{}, { deviceRoutes: [] }]) {
+      const problems = await problemsOf(devicePackage([SCREEN]), overrides);
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /the entry's device routes is \[\], the package's is .*screen/,
+      );
+    }
+  });
+
+  it("fails when the entry declares one and the package declares none", async () => {
+    const problems = await problemsOf(devicePackage([]), {
+      deviceRoutes: [SCREEN],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's device routes is .*screen.*, the package's is \[\]\.$/,
+    );
+  });
+
+  it("fails when the entry names another path for a route", async () => {
+    const problems = await problemsOf(devicePackage([SCREEN]), {
+      deviceRoutes: [{ ...SCREEN, path: "wall" }],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the entry's device routes is .*wall/);
+  });
+});
+
+describe("a plugin's records about a person", () => {
+  const CLAIMS = {
+    collection: "claims",
+    titleKey: "records.claims.title",
+    personalData: ["name", "apartment"],
+    keepAtMostDays: 730,
+    fields: [
+      { key: "space", labelKey: "records.claims.space", provided: true },
+      { key: "note", labelKey: "records.claims.note", provided: false },
+    ],
+  };
+
+  const recordsPackage = (personRecords) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: { ...PLUGIN_PACKAGE.openbrf, personRecords },
+    });
+
+  async function problemsOf(bytes, overrides, version = 2) {
+    const entry = pluginEntry(bytes, overrides);
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's, its lists in any order", async () => {
+    const bytes = recordsPackage([CLAIMS]);
+    for (const version of [2, 3]) {
+      assert.deepEqual(
+        await problemsOf(
+          bytes,
+          {
+            personRecords: [
+              {
+                ...CLAIMS,
+                personalData: [...CLAIMS.personalData].reverse(),
+                fields: [...CLAIMS.fields].reverse(),
+              },
+            ],
+          },
+          version,
+        ),
+        [],
+      );
+    }
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    assert.deepEqual(await problemsOf(plugin, { personRecords: [] }), []);
+    assert.deepEqual(await problemsOf(plugin, {}), []);
+  });
+
+  it("fails when the package declares one and the entry says nothing", async () => {
+    for (const version of [2, 3]) {
+      for (const overrides of [{}, { personRecords: [] }]) {
+        const problems = await problemsOf(
+          recordsPackage([CLAIMS]),
+          overrides,
+          version,
+        );
+        assert.equal(problems.length, 1, problems.join("\n"));
+        assert.match(
+          problems[0],
+          /the entry's records about a person is \[\], the package's is .*claims/,
+        );
+      }
+    }
+  });
+
+  it("fails when the entry declares one and the package declares none", async () => {
+    const problems = await problemsOf(plugin, { personRecords: [CLAIMS] });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's records about a person is .*claims.*, the package's is \[\]\.$/,
+    );
+  });
+
+  for (const [field, value] of [
+    ["personalData", ["apartment"]],
+    ["keepAtMostDays", 365],
+    ["fields", [CLAIMS.fields[0]]],
+  ]) {
+    it(`fails when the entry states another ${field} than the package`, async () => {
+      const problems = await problemsOf(recordsPackage([CLAIMS]), {
+        personRecords: [{ ...CLAIMS, [field]: value }],
+      });
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(problems[0], /the entry's records about a person is /);
+    });
+  }
 });

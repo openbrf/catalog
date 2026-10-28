@@ -729,6 +729,24 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
         residentRoutePaths(entry.residentRoutes ?? []),
         residentRoutePaths(manifest.residentRoutes ?? []),
       ],
+      // The board consents to the routes a device reaches with a token the
+      // board issues before anything is downloaded (ADR 0031). Absent is none
+      // on both sides: a version 1 entry cannot carry them.
+      [
+        "device routes",
+        deviceRouteSet(entry.deviceRoutes ?? []),
+        deviceRouteSet(manifest.deviceRoutes ?? []),
+      ],
+      // The consent screen shows each collection of records about a person,
+      // its categories and its bound before anything is downloaded, and the
+      // access report labels a record's fields from it (ADR 0047), so the
+      // entry repeats it whole. Absent is none on both sides: a version 1
+      // entry cannot carry it.
+      [
+        "records about a person",
+        personRecordSet(entry.personRecords ?? []),
+        personRecordSet(manifest.personRecords ?? []),
+      ],
       // The board reads the processing a plugin declares on the consent screen
       // before anything is downloaded, and the install seeds the record of
       // processing activities from it (ADR 0035), so the entry repeats it
@@ -1109,6 +1127,27 @@ function pointSet(points) {
 /** Resident routes compared as the set of their paths, which are exact. */
 function residentRoutePaths(routes) {
   return routes.map(({ path }) => path).sort();
+}
+
+/** Device routes compared as a set, each with its keys in one order. */
+function deviceRouteSet(routes) {
+  return routes.map(canonical).sort();
+}
+
+/**
+ * Collections of records about a person compared as a set, each with its
+ * categories and its fields in one order.
+ */
+function personRecordSet(collections) {
+  return collections
+    .map((collection) =>
+      canonical({
+        ...collection,
+        personalData: sorted(collection.personalData),
+        fields: collection.fields.map(canonical).sort(),
+      }),
+    )
+    .sort();
 }
 
 /** The extension points a plugin extends, compared as a set like the above. */
