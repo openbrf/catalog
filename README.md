@@ -45,9 +45,9 @@ entry carries it, so a plugin entry that carries `residentRoutes`, an empty list
 included, is listed in `catalog-v3.json` only, and `catalog-v2.json` carries
 none. Every other entry of `catalog-v2.json` is listed in `catalog-v3.json`, the
 same in both, so an instance that reads version 3 offers what one that reads
-version 2 does. No entry carries `residentRoutes` yet, so `catalog-v3.json` is
-`catalog-v2.json` with its version set to 3. A pull request that adds or changes
-an entry that `catalog-v2.json` lists changes `catalog-v3.json` the same way.
+version 2 does, and parking share, which declares resident routes, besides. A
+pull request that adds or changes an entry that `catalog-v2.json` lists changes
+`catalog-v3.json` the same way.
 
 ## What a listing must meet
 

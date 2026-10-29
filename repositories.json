@@ -2,6 +2,7 @@
   "version": 1,
   "repositories": {
     "openbrf/example-plugin": { "id": "1348543143", "ownerId": "321721182" },
-    "openbrf/example-theme": { "id": "1348543204", "ownerId": "321721182" }
+    "openbrf/example-theme": { "id": "1348543204", "ownerId": "321721182" },
+    "openbrf/parking-share": { "id": "1438522913", "ownerId": "321721182" }
   }
 }

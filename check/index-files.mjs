@@ -102,7 +102,7 @@ export function indexFileProblems(v1Entries, v2Entries) {
  * What is wrong with `catalog-v2.json` and `catalog-v3.json`, each given as its
  * entries: version 2 carries nothing that needs version 3, version 3 lists
  * every entry of version 2 unchanged, and lists no other entry unless it needs
- * version 3. Today no entry needs version 3, so the two lists are the same.
+ * version 3.
  */
 export function indexFileProblemsV3(v2Entries, v3Entries) {
   return pairProblems(

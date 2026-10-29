@@ -62,6 +62,189 @@
       }
     },
     {
+      "type": "plugin",
+      "id": "parking-share",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Parkeringsdelning",
+        "en": "Parking share"
+      },
+      "description": {
+        "sv": "En boende erbjuder den parkeringsplats styrelsen tilldelat dem för dagar de inte använder den, och en granne tar den. Den som tar platsen först får den. Grannarna ser platsen och dagarna, aldrig vem som erbjuder eller vem som tar platsen, och den som tar platsen och den som har den får var sitt bekräftelsemejl. Styrelsen håller listan över platserna, tilldelar varje plats och ser alla erbjudanden och bokningar.",
+        "en": "A resident offers the parking space the board assigned them for days they will not use it, and a neighbour claims it. The first claim wins. Neighbours see the space and the days, never who offers or who claims, and the claimer and the holder each get a confirmation by mail. The board keeps the list of spaces, assigns each one and sees every offer and claim."
+      },
+      "homepage": "https://github.com/openbrf/parking-share",
+      "packageName": "@apteoab/parking-share",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read",
+        "addressBook:readContact",
+        "mail:send",
+        "jobs:schedule"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "email"
+      ],
+      "actions": [
+        {
+          "id": "offer",
+          "capability": "self:manage",
+          "effect": "write",
+          "personalData": [
+            "apartment"
+          ],
+          "surfaces": [
+            "ui",
+            "ai"
+          ]
+        },
+        {
+          "id": "claim",
+          "capability": "self:manage",
+          "effect": "write",
+          "personalData": [
+            "apartment"
+          ],
+          "surfaces": [
+            "ui",
+            "ai"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Låta en boende erbjuda sin parkeringsplats under en period när den inte används och en granne ta den, samt ge styrelsen en översikt över platserna, erbjudandena och bokningarna.",
+          "en": "Let a resident offer their parking space for a period when it is not used and a neighbour claim it, and give the board an overview of the spaces, offers and claims."
+        },
+        "legalBasis": "contract",
+        "retention": {
+          "sv": "Ett erbjudande och en bokning raderas ett år efter den period de gäller. En tilldelning av plats raderas senast fem år efter att den gjordes, eller tidigare om styrelsen tar bort den.",
+          "en": "An offer and a claim are erased a year after the period they cover. An assignment of a space is erased five years after it was made at the latest, or earlier if the board removes it."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "personRecords": [
+        {
+          "collection": "assignments",
+          "titleKey": "records.assignments.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 1830,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.assignments.space"
+            }
+          ]
+        },
+        {
+          "collection": "offers",
+          "titleKey": "records.offers.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 730,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.offers.space",
+              "provided": true
+            },
+            {
+              "key": "from",
+              "labelKey": "records.offers.from",
+              "provided": true
+            },
+            {
+              "key": "to",
+              "labelKey": "records.offers.to",
+              "provided": true
+            },
+            {
+              "key": "status",
+              "labelKey": "records.offers.status"
+            }
+          ]
+        },
+        {
+          "collection": "days",
+          "titleKey": "records.days.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 366,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.days.space",
+              "provided": true
+            },
+            {
+              "key": "day",
+              "labelKey": "records.days.day",
+              "provided": true
+            }
+          ]
+        },
+        {
+          "collection": "claims",
+          "titleKey": "records.claims.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 730,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.claims.space",
+              "provided": true
+            },
+            {
+              "key": "from",
+              "labelKey": "records.claims.from",
+              "provided": true
+            },
+            {
+              "key": "to",
+              "labelKey": "records.claims.to",
+              "provided": true
+            },
+            {
+              "key": "status",
+              "labelKey": "records.claims.status"
+            }
+          ]
+        }
+      ],
+      "residentRoutes": [
+        {
+          "path": "me",
+          "title": {
+            "sv": "Se din egen parkeringsplats, dina erbjudanden och dina bokningar",
+            "en": "See your own parking space, offers and claims"
+          }
+        },
+        {
+          "path": "offers",
+          "title": {
+            "sv": "Erbjud din parkeringsplats några dagar och ta en grannes",
+            "en": "Offer your parking space for some days, and claim a neighbour's"
+          }
+        }
+      ],
+      "artifact": {
+        "url": "https://github.com/openbrf/parking-share/releases/download/v0.1.0/apteoab-parking-share-0.1.0.tgz",
+        "sha512": "sha512-tQetjEWJnaVey9QlKkThkk9YY/WH180CKNjs1T76wXYqyREeHTD4LYbCZfcLKEkDrl3lXZcK7UU0KLVf8oC2fg==",
+        "bytes": 137177
+      }
+    },
+    {
       "type": "theme",
       "id": "example-theme",
       "version": "0.1.0",
