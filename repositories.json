@@ -2,6 +2,8 @@
   "version": 1,
   "repositories": {
     "openbrf/example-plugin": { "id": "1348543143", "ownerId": "321721182" },
-    "openbrf/example-theme": { "id": "1348543204", "ownerId": "321721182" }
+    "openbrf/example-theme": { "id": "1348543204", "ownerId": "321721182" },
+    "openbrf/signage": { "id": "1433678298", "ownerId": "321721182" },
+    "openbrf/signage-residents": { "id": "1433678337", "ownerId": "321721182" }
   }
 }

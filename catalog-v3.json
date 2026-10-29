@@ -62,6 +62,152 @@
       }
     },
     {
+      "type": "plugin",
+      "id": "signage",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Digital skyltning",
+        "en": "Digital signage"
+      },
+      "description": {
+        "sv": "Betalmodul från Apteo för skärmar i huset: kopplar ihop skärmarna med instansen, ställer in vad varje skärm visar och ger den nyheter, evenemang, kallelser och lediga tider. Kräver ett Apteo-konto: utan kontonyckel går ingen skärm att koppla ihop.",
+        "en": "A paid module from Apteo for the screens in the building: pairs the screens with the instance, sets what each screen shows and gives it news, events, meeting notices and free times. Needs an Apteo account: without an account key no screen can be paired."
+      },
+      "homepage": "https://github.com/openbrf/signage",
+      "packageName": "@apteoab/signage",
+      "apiVersion": 1,
+      "permissions": [
+        "news:read",
+        "calendar:read",
+        "bookings:readAvailability",
+        "media:read",
+        "addresses:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "photograph",
+        "freeText"
+      ],
+      "extensionPoints": [
+        {
+          "id": "source",
+          "version": 1,
+          "personalData": [
+            "name",
+            "apartment"
+          ],
+          "title": {
+            "sv": "Källa till skärmarnas innehåll",
+            "en": "Source of the screens' content"
+          },
+          "description": {
+            "sv": "Låter en utökning lägga till innehåll i skärmarnas rotation. Tar emot namn och lägenheter, och bara för de skärmar styrelsen slagit på utökningen för.",
+            "en": "Lets an addon add content to the screens' rotation. Accepts names and apartments, and only for the screens the board switched the addon on for."
+          }
+        }
+      ],
+      "recipients": [
+        {
+          "id": "pairing-service",
+          "origin": "https://signage.openbrf.se",
+          "purpose": {
+            "sv": "Apteos parkopplingstjänst för digital skyltning. Hit skickas kontonyckeln, de tio första tecknen i den kod en skärm visar när den parkopplas (aldrig de sex sista), den förseglade överlämningen till skärmen, som tjänsten inte kan läsa, och vilken releasekanal skärmen följer. Tjänsten får inget skärminnehåll och inget om föreningens boende.",
+            "en": "Apteo's pairing service for digital signage. It receives the account key, the first ten characters of the code a screen shows when it is paired (never the last six), the sealed handover to the screen, which the service cannot read, and which release channel the screen follows. It receives no screen content and nothing about the association's residents."
+          },
+          "personalData": []
+        }
+      ],
+      "deviceRoutes": [
+        {
+          "id": "screen",
+          "path": "screen"
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa på husets skärmar de nyheter och evenemang styrelsen markerat för skärmar, kallelsen till nästa föreningsstämma, lediga tider och de bilder styrelsen valt ut för skärmarna, och de namn och lägenheter som en utökning styrelsen slagit på för skärmen lämnar över.",
+          "en": "Show on the building's screens the news items and events the board marked for screens, the notice of the next general meeting, free times and the pictures the board picked for them, and the names and apartments an addon the board switched on for the screen hands over."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att de som bor i och besöker huset ser föreningens nyheter, evenemang, kallelser och lediga tider där de går förbi, och, där styrelsen slagit på en utökning för en skärm, vem som bor bakom varje dörr i uppgången, som en namntavla visar det.",
+          "en": "That the people who live in and visit the building see the association's news, events, meeting notices and free times where they pass, and, where the board switched an addon on for a screen, who lives behind each door of the entrance, as a name board shows it."
+        },
+        "retention": {
+          "sv": "Sparas inte på instansen. På skärmen till nästa hämtning, och i skärmens cache högst 24 timmar när instansen inte svarar.",
+          "en": "Not stored on the instance. On the screen until the next fetch, and in the screen's cache for at most 24 hours while the instance does not answer."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/signage/releases/download/v0.1.0/apteoab-signage-0.1.0.tgz",
+        "sha512": "sha512-7xKTSLDvZK1xCngLaamnlQCvzkpEzlbkrpbg2nYGI8tz+DpzUwMafadclCk0/FxcLxOMpHWwwagwC99ElhpvOA==",
+        "bytes": 112177
+      }
+    },
+    {
+      "type": "plugin",
+      "id": "signage-residents",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Digital skyltning: boende vid dörrarna",
+        "en": "Digital signage: residents at the doors"
+      },
+      "description": {
+        "sv": "Betalutökning till Digital skyltning: visar vilket hushåll som bor bakom vilken dörr på skärmarna inne i en entré, som en namntavla. Efternamn per lägenhet, förnamn bara med samtycke, och ingen med skyddade personuppgifter, begränsad behandling eller invändning. Kräver Digital skyltning och därmed ett Apteo-konto.",
+        "en": "A paid addon to Digital signage: shows which household lives behind which door on the screens inside an entrance, as a name board does. Surnames per apartment, a first name only with consent, and nobody with protected personal data, under a restriction or who has objected. Needs Digital signage and so an Apteo account."
+      },
+      "homepage": "https://github.com/openbrf/signage-residents",
+      "packageName": "@apteoab/signage-residents",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment"
+      ],
+      "extends": [
+        {
+          "plugin": "signage",
+          "point": "source",
+          "version": 1,
+          "personalData": [
+            "name",
+            "apartment"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa vilket hushåll som bor bakom vilken dörr på skärmarna i husets egna entréer, så att besökare, bud och räddningstjänst hittar rätt dörr.",
+          "en": "Show which household lives behind which door on the screens in the house's own entrances, so that visitors, deliveries and emergency services find the right door."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att hjälpa den som söker ett hushåll i huset att hitta det, som en namntavla i entrén alltid har gjort. Avvägning: bara efternamn, förnamn bara med samtycke, bara i det egna huset och bara på skärmar inne i huset. Personer med skyddade personuppgifter eller begränsad behandling visas aldrig, och den som invänder tas bort.",
+          "en": "Helping somebody looking for a household in the building to find it, as a name board in the entrance always has. Balancing: surnames only, a first name only with consent, only in the house itself and only on screens inside it. Persons with protected personal data or under a restriction are never shown, and anybody who objects is taken off."
+        },
+        "retention": {
+          "sv": "Sparas inte av utökningen. Visas så länge boendet gäller och tas bort vid utflyttning eller invändning. På skärmen till nästa hämtning, och i skärmens cache högst 24 timmar när instansen inte svarar.",
+          "en": "Not stored by the addon. Shown while the residency holds, and taken off at move-out or objection. On the screen until its next fetch, and in the screen's cache for at most 24 hours while the instance does not answer."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/signage-residents/releases/download/v0.1.0/apteoab-signage-residents-0.1.0.tgz",
+        "sha512": "sha512-YOU+zhGNldBUmzk6rntc/DRJJShjJ8hcs+HB9W5VV4aqs8rMqsV/1PkRMxcpl/mag/+/grwY3RXpaqi75JYu/Q==",
+        "bytes": 79222
+      }
+    },
+    {
       "type": "theme",
       "id": "example-theme",
       "version": "0.1.0",
