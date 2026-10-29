@@ -149,6 +149,11 @@ reviews:
         listed in the files of every version that can carry it, the same in
         each.
 
+        For a plugin with residentRoutes, compare each route's curator title
+        with what the route does for a resident, and flag a title that says
+        more or less than the plugin's description and routes allow: the
+        consent screen shows it before anything is downloaded.
+
         Removing an entry takes the package away from new installs and leaves
         existing ones without updates; "deprecated": true keeps existing
         installs while offering it to no new one. Flag a removal whose pull

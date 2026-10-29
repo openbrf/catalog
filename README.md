@@ -273,6 +273,64 @@ beside a plugin that publishes to the website. A host
 plugin that this index does not list is held to the same rules by the instance
 when both are installed.
 
+### A plugin with resident routes
+
+A plugin that reads the address book can declare `residentRoutes`, the routes a
+resident may call without a board seat
+([ADR 0051](https://github.com/openbrf/openbrf/blob/main/docs/adr/0051-resident-routes-in-a-plugin-that-reads-the-register.md)).
+The board reads them on the consent screen before anything is downloaded, so
+the entry repeats them, each with its `path` and the curator's `title` in
+Swedish and English in place of the manifest's `titleKey` (the plugin's locale
+files are not on the instance yet). A plugin that declares them is listed in
+`catalog-v3.json` only:
+
+```json
+"residentRoutes": [
+  {
+    "path": "offers",
+    "title": {
+      "sv": "Erbjud din parkeringsplats några dagar",
+      "en": "Offer your parking space for some days"
+    }
+  }
+]
+```
+
+The check holds the entry to the package: the paths are the same set, in any
+order. The title is the curator's text and is not compared. The index refuses
+an entry whose routes the manifest would refuse, by the manifest's own rules
+(`declaredResidentRoutesSchema` and `residentRouteRuleIssues` in
+`@openbrf/plugin-sdk`): more than eight routes, two that overlap, one over
+`oauthProtectedResource`, and routes beside no address-book permission, a
+finance permission or an extension point. The rule on the board's section needs
+the view, which an entry does not carry, so it is applied when the check reads
+the package's own manifest.
+
+The reviewer reads each resident route's handler in the bundle beside what the
+board's consent covers (ADR 0051, "What catalog review reads"). A listing whose
+resident routes fail one of these is not listed:
+
+- what it returns about anybody but the caller: only what a feature the
+  description names needs, and no person id, name, apartment or contact of
+  another person unless the feature is to show it and the description says so;
+- what it says when another person's record goes: the same whatever the reason,
+  and the same for a write refused with `PluginRecordConflictError` whether the
+  key is held by a record the plugin cannot read or by a readable one;
+- what reaches it from elsewhere: no register data read in a job, a board route
+  or a settings screen, through memory, `host.records` or a person record's
+  value, and no register read kept in memory to be served across routes;
+- what it hands a job: no person id the caller supplied;
+- what it leaves running: no listener or callback the handler sets up outlives
+  its answer or uses a request other than its own;
+- how long it takes: it answers well within its deadline of four and a half
+  seconds, with no long-poll or wait on an event. The host ends an outbound
+  call such as `recipients.fetch` in time for the handler to answer, whatever
+  its `timeoutMs`, so no smaller `timeoutMs` is required. A handler that waits
+  still holds the plugin's board routes and jobs, and a resident who can make
+  it hang can fail them whenever they like;
+- what the screen tells a resident before they act: what their neighbours will
+  see of what they offer or claim.
+
 ### A licensed plugin
 
 A paid plugin declares the instance licence it reads in its manifest's
