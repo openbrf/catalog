@@ -1,7 +1,8 @@
 /**
  * How the index files relate: `catalog.json` (version 1), `catalog-v2.json`
- * (version 2) and `catalog-v3.json` (version 3). Pure, so the rules are tested
- * on entries built in memory as well as on the files in this repository.
+ * (version 2), `catalog-v3.json` (version 3) and `catalog-v4.json` (version 4).
+ * Pure, so the rules are tested on entries built in memory as well as on the
+ * files in this repository.
  */
 
 import { isDeepStrictEqual } from "node:util";
@@ -46,6 +47,37 @@ export function needsVersion3(entry) {
   return (
     entry.type !== "theme" &&
     VERSION_3_FIELDS.some((field) => Object.hasOwn(entry, field))
+  );
+}
+
+/**
+ * The plugin entry fields only version 4 of the index defines (ADR 0053). A
+ * version 3 index that carries one is refused whole, so an entry with any of
+ * them is listed in `catalog-v4.json` only. Found by presence, as the schema
+ * refuses it either way.
+ */
+export const VERSION_4_FIELDS = ["nonResidentCallers"];
+
+/**
+ * Whether the entry carries a field that only version 4 defines: one of
+ * `VERSION_4_FIELDS`, or `showsSubject` on a collection of records about a
+ * person, `false` included, since version 3 reads a collection strictly.
+ */
+export function needsVersion4(entry) {
+  if (entry.type === "theme") {
+    return false;
+  }
+  if (VERSION_4_FIELDS.some((field) => Object.hasOwn(entry, field))) {
+    return true;
+  }
+  return (
+    Array.isArray(entry.personRecords) &&
+    entry.personRecords.some(
+      (collection) =>
+        typeof collection === "object" &&
+        collection !== null &&
+        Object.hasOwn(collection, "showsSubject"),
+    )
   );
 }
 
@@ -102,7 +134,7 @@ export function indexFileProblems(v1Entries, v2Entries) {
  * What is wrong with `catalog-v2.json` and `catalog-v3.json`, each given as its
  * entries: version 2 carries nothing that needs version 3, version 3 lists
  * every entry of version 2 unchanged, and lists no other entry unless it needs
- * version 3. Today no entry needs version 3, so the two lists are the same.
+ * version 3.
  */
 export function indexFileProblemsV3(v2Entries, v3Entries) {
   return pairProblems(
@@ -110,5 +142,20 @@ export function indexFileProblemsV3(v2Entries, v3Entries) {
     { name: "catalog-v3.json", entries: v3Entries },
     needsVersion3,
     3,
+  );
+}
+
+/**
+ * What is wrong with `catalog-v3.json` and `catalog-v4.json`, each given as its
+ * entries: version 3 carries nothing that needs version 4, version 4 lists
+ * every entry of version 3 unchanged, and lists no other entry unless it needs
+ * version 4.
+ */
+export function indexFileProblemsV4(v3Entries, v4Entries) {
+  return pairProblems(
+    { name: "catalog-v3.json", entries: v3Entries },
+    { name: "catalog-v4.json", entries: v4Entries },
+    needsVersion4,
+    4,
   );
 }
