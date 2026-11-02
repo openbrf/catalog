@@ -210,7 +210,7 @@
     {
       "type": "plugin",
       "id": "parking-share",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "name": {
         "sv": "Parkeringsdelning",
         "en": "Parking share"
@@ -264,7 +264,11 @@
           "sv": "Låta en boende erbjuda sin parkeringsplats under en period när den inte används och en granne ta den, samt ge styrelsen en översikt över platserna, erbjudandena och bokningarna.",
           "en": "Let a resident offer their parking space for a period when it is not used and a neighbour claim it, and give the board an overview of the spaces, offers and claims."
         },
-        "legalBasis": "contract",
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att de som bor i huset kan använda en parkeringsplats som innehavaren inte behöver under en period, i stället för att den står tom, och att styrelsen har en översikt över platserna den tilldelar och hur de delas. Avvägning: en granne ser bara platsen och dagarna, aldrig vem som erbjuder eller tar den, och erbjudanden och bokningar raderas ett år efter sin period. Ingen med skyddade personuppgifter eller begränsad behandling tas med, inte heller den vars invändning styrelsen har beviljat.",
+          "en": "That the people who live in the building can use a parking space its holder does not need for a period, instead of it standing empty, and that the board has an overview of the spaces it assigns and how they are shared. Balancing: a neighbour sees only the space and the days, never who offers or claims it, and offers and claims are erased a year after their period. Nobody with protected personal data or under a restriction is included, nor anybody whose objection the board has granted."
+        },
         "retention": {
           "sv": "Ett erbjudande och en bokning raderas ett år efter den period de gäller. En tilldelning av plats raderas senast fem år efter att den gjordes, eller tidigare om styrelsen tar bort den.",
           "en": "An offer and a claim are erased a year after the period they cover. An assignment of a space is erased five years after it was made at the latest, or earlier if the board removes it."
@@ -385,9 +389,9 @@
         }
       ],
       "artifact": {
-        "url": "https://github.com/openbrf/parking-share/releases/download/v0.1.0/apteoab-parking-share-0.1.0.tgz",
-        "sha512": "sha512-NG8NN2IcTn77n66fLgLBOZkXhYTmMrzRCkXleWJ7Ti++czVO3MATztEp+F1xRnml0hrQXQ2VTvgo3t8B7oCZ7w==",
-        "bytes": 137166
+        "url": "https://github.com/openbrf/parking-share/releases/download/v0.1.1/apteoab-parking-share-0.1.1.tgz",
+        "sha512": "sha512-jXh/75GfwfquFP2Y6plO2Kv4oYV124ZVVkU2e9At0Kr2kBvVy/6QFpAy/0wWGlePCHEA2eCRFLCVW21OT5r7JQ==",
+        "bytes": 137852
       }
     },
     {
