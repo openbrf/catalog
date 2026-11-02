@@ -64,7 +64,7 @@
     {
       "type": "plugin",
       "id": "signage",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "name": {
         "sv": "Digital skyltning",
         "en": "Digital signage"
@@ -126,8 +126,8 @@
       ],
       "processing": {
         "purpose": {
-          "sv": "Visa på husets skärmar de nyheter och evenemang styrelsen markerat för skärmar, kallelsen till nästa föreningsstämma, lediga tider och de bilder styrelsen valt ut för skärmarna, och de namn och lägenheter som en utökning styrelsen slagit på för skärmen lämnar över.",
-          "en": "Show on the building's screens the news items and events the board marked for screens, the notice of the next general meeting, free times and the pictures the board picked for them, and the names and apartments an addon the board switched on for the screen hands over."
+          "sv": "Visa på husets skärmar de nyheter och evenemang styrelsen markerat för skärmar, kallelsen till nästa föreningsstämma, lediga tider och de bilder styrelsen valt ut. Modulen läser ingen person ur registret. Fritexten är det styrelsen skrivit, och den kan nämna någon som registret inte känner igen. Fotografierna är bilder uppladdade som att de inte visar någon som går att känna igen. Namn och lägenheter ur registret når en skärm bara från en utökning som styrelsen slagit på för just den skärmen.",
+          "en": "Show on the building's screens the news items and events the board marked for screens, the notice of the next general meeting, free times and the pictures the board chose. The module reads nobody from the register. The free text is what the board wrote, and it can name somebody the register does not hold. The photographs are pictures uploaded as showing nobody recognisable. Names and apartments from the register reach a screen only from an addon the board switched on for that screen."
         },
         "legalBasis": "legitimateInterest",
         "legitimateInterest": {
@@ -144,9 +144,9 @@
         ]
       },
       "artifact": {
-        "url": "https://github.com/openbrf/signage/releases/download/v0.1.0/apteoab-signage-0.1.0.tgz",
-        "sha512": "sha512-7xKTSLDvZK1xCngLaamnlQCvzkpEzlbkrpbg2nYGI8tz+DpzUwMafadclCk0/FxcLxOMpHWwwagwC99ElhpvOA==",
-        "bytes": 112177
+        "url": "https://github.com/openbrf/signage/releases/download/v0.1.1/apteoab-signage-0.1.1.tgz",
+        "sha512": "sha512-Qu2GDTffPkkL5qyqNzOizxpVRbk+l66QD1Gv4xA14V7Sbv4B2ZWbd0qE6yAq8CamjB0fuB08NcVXS15uotGPnQ==",
+        "bytes": 112959
       }
     },
     {
