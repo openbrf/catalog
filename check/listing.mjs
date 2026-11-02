@@ -723,11 +723,21 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
       // route outside that consent. Only the paths are compared: the entry's
       // title is the curator's text and the manifest's titleKey a key in the
       // plugin's own namespace, which are not the same value. Absent is none
-      // on both sides: only version 3 of the index carries them.
+      // on both sides: only version 3 of the index and later carry them.
       [
         "resident routes",
         residentRoutePaths(entry.residentRoutes ?? []),
         residentRoutePaths(manifest.residentRoutes ?? []),
+      ],
+      // The board consents to the classes of caller those routes serve
+      // besides the listed residents before anything is downloaded, and the
+      // core serves no class outside that consent (ADR 0053). Compared as a
+      // set. Absent is none on both sides: only version 4 of the index
+      // carries them.
+      [
+        "classes of caller who do not live here",
+        sorted(entry.nonResidentCallers ?? []),
+        sorted(manifest.nonResidentCallers ?? []),
       ],
       // The board consents to the routes a device reaches with a token the
       // board issues before anything is downloaded (ADR 0031). Absent is none
@@ -740,8 +750,9 @@ async function pluginProblems(entry, bytes, built, deps, licences) {
       // The consent screen shows each collection of records about a person,
       // its categories and its bound before anything is downloaded, and the
       // access report labels a record's fields from it (ADR 0047), so the
-      // entry repeats it whole. Absent is none on both sides: a version 1
-      // entry cannot carry it.
+      // entry repeats it whole, whether a collection shows its subject's name
+      // included (ADR 0053). Absent is none on both sides: a version 1 entry
+      // cannot carry it.
       [
         "records about a person",
         personRecordSet(entry.personRecords ?? []),
@@ -1136,15 +1147,18 @@ function deviceRouteSet(routes) {
 
 /**
  * Collections of records about a person compared as a set, each with its
- * categories and its fields in one order.
+ * categories and its fields in one order. A collection's `showsSubject` reads
+ * as false when absent, as the core reads it (ADR 0053), so a package that
+ * states `false` agrees with an entry of version 2 or 3, which cannot carry it.
  */
 function personRecordSet(collections) {
   return collections
-    .map((collection) =>
+    .map(({ showsSubject, ...collection }) =>
       canonical({
         ...collection,
         personalData: sorted(collection.personalData),
         fields: collection.fields.map(canonical).sort(),
+        showsSubject: showsSubject === true,
       }),
     )
     .sort();

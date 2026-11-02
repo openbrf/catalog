@@ -298,6 +298,20 @@ describe("the index files in this repository", () => {
     assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
   });
 
+  it("catalog-v3.json is an index of version 3 the instance reads", () => {
+    const index = read("catalog-v3.json");
+    assert.equal(index.version, 3);
+    const parsed = sdk.parseCatalogIndex(index);
+    assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
+  it("catalog-v4.json is an index of version 4 the instance reads", () => {
+    const index = read("catalog-v4.json");
+    assert.equal(index.version, 4);
+    const parsed = sdk.parseCatalogIndex(index);
+    assert.deepEqual(parsed.ok ? [] : parsed.issues, []);
+  });
+
   it("catalog.json carries nothing that needs version 2", () => {
     for (const entry of read("catalog.json").entries) {
       assert.equal(needsVersion2(entry), false, `${entry.id}`);
@@ -478,8 +492,9 @@ describe("an index of version 1", () => {
   });
 
   it("is refused under the name of the file it was read from", async () => {
+    // A version no core reads, so the index is refused whatever it lists.
     const problems = await catalogProblems(
-      { version: 4, entries: [] },
+      { version: 99, entries: [] },
       { ...published([]), indexName: "catalog-v2.json" },
     );
     assert.ok(problems.length > 0);
@@ -3069,6 +3084,89 @@ describe("a plugin's resident routes", () => {
   });
 });
 
+describe("the classes of caller a plugin's resident routes serve who do not live here", () => {
+  const OFFERS = { path: "offers", titleKey: "routes.offers" };
+  const ROUTES = [{ path: "offers", title: { sv: "Erbjud", en: "Offer" } }];
+
+  const callersPackage = (nonResidentCallers) =>
+    pluginArchive({
+      ...PLUGIN_PACKAGE,
+      openbrf: {
+        ...PLUGIN_PACKAGE.openbrf,
+        residentRoutes: [OFFERS],
+        ...(nonResidentCallers === undefined ? {} : { nonResidentCallers }),
+      },
+    });
+
+  async function problemsOf(bytes, overrides, version = 4) {
+    const entry = pluginEntry(bytes, { residentRoutes: ROUTES, ...overrides });
+    return catalogProblems(
+      { version, entries: [entry] },
+      published([{ url: entry.artifact.url, bytes }]),
+    );
+  }
+
+  it("passes when the entry repeats the package's, in any order", async () => {
+    const bytes = callersPackage(["board", "pluginAccess"]);
+    assert.deepEqual(
+      await problemsOf(bytes, { nonResidentCallers: ["pluginAccess", "board"] }),
+      [],
+    );
+  });
+
+  it("passes when the entry and the package both declare none", async () => {
+    assert.deepEqual(await problemsOf(callersPackage(undefined), {}), []);
+    assert.deepEqual(await problemsOf(callersPackage(undefined), {}, 3), []);
+  });
+
+  it("fails when the package declares one and the entry says nothing", async () => {
+    for (const version of [3, 4]) {
+      const problems = await problemsOf(callersPackage(["board"]), {}, version);
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /the entry's classes of caller who do not live here is \[\], the package's is .*board/,
+      );
+    }
+  });
+
+  it("fails when the entry declares one and the package declares none", async () => {
+    const problems = await problemsOf(callersPackage(undefined), {
+      nonResidentCallers: ["board"],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's classes of caller who do not live here is .*board.*, the package's is \[\]\.$/,
+    );
+  });
+
+  it("fails when the entry names another class than the package", async () => {
+    const problems = await problemsOf(callersPackage(["board"]), {
+      nonResidentCallers: ["administrator"],
+    });
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(
+      problems[0],
+      /the entry's classes of caller who do not live here is .*administrator.*, the package's is .*board/,
+    );
+  });
+
+  it("fails when an index of version 3 carries them", async () => {
+    const problems = await problemsOf(
+      callersPackage(["board"]),
+      { nonResidentCallers: ["board"] },
+      3,
+    );
+    assert.ok(
+      problems.some((problem) =>
+        /Unrecognized key: "nonResidentCallers"/.test(problem),
+      ),
+      problems.join("\n"),
+    );
+  });
+});
+
 describe("a plugin's device routes", () => {
   const SCREEN = { id: "screen", path: "screen" };
   const DOOR = { id: "door", path: "door" };
@@ -3220,4 +3318,69 @@ describe("a plugin's records about a person", () => {
       assert.match(problems[0], /the entry's records about a person is /);
     });
   }
+
+  it("passes in version 4 when the entry repeats a collection that shows its subject", async () => {
+    const shown = { ...CLAIMS, showsSubject: true };
+    assert.deepEqual(
+      await problemsOf(recordsPackage([shown]), { personRecords: [shown] }, 4),
+      [],
+    );
+  });
+
+  it("fails when the package shows the subject and the entry does not say so", async () => {
+    const shown = { ...CLAIMS, showsSubject: true };
+    for (const version of [2, 3, 4]) {
+      const problems = await problemsOf(
+        recordsPackage([shown]),
+        { personRecords: [CLAIMS] },
+        version,
+      );
+      assert.equal(problems.length, 1, problems.join("\n"));
+      assert.match(
+        problems[0],
+        /the entry's records about a person is .*showsSubject\W+false.*, the package's is .*showsSubject\W+true/,
+      );
+    }
+  });
+
+  it("fails when the entry shows the subject and the package does not", async () => {
+    const problems = await problemsOf(
+      recordsPackage([CLAIMS]),
+      { personRecords: [{ ...CLAIMS, showsSubject: true }] },
+      4,
+    );
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0], /the entry's records about a person is /);
+  });
+
+  it("reads an absent showsSubject as false on both sides", async () => {
+    const unshown = { ...CLAIMS, showsSubject: false };
+    for (const version of [2, 3, 4]) {
+      assert.deepEqual(
+        await problemsOf(
+          recordsPackage([unshown]),
+          { personRecords: [CLAIMS] },
+          version,
+        ),
+        [],
+      );
+    }
+    assert.deepEqual(
+      await problemsOf(recordsPackage([CLAIMS]), { personRecords: [unshown] }, 4),
+      [],
+    );
+  });
+
+  it("fails when an index of version 3 carries showsSubject", async () => {
+    const shown = { ...CLAIMS, showsSubject: true };
+    const problems = await problemsOf(
+      recordsPackage([shown]),
+      { personRecords: [shown] },
+      3,
+    );
+    assert.ok(
+      problems.some((problem) => /Unrecognized key: "showsSubject"/.test(problem)),
+      problems.join("\n"),
+    );
+  });
 });

@@ -1,7 +1,7 @@
 /**
  * Checks the catalog's index files, catalog.json (index version 1),
- * catalog-v2.json (version 2) and catalog-v3.json (version 3), against every
- * rule a listing must meet, over the network: the release each artifact is on,
+ * catalog-v2.json (version 2), catalog-v3.json (version 3) and catalog-v4.json
+ * (version 4), against every rule a listing must meet, over the network: the release each artifact is on,
  * the artifact's bytes and its build attestation, whether the commits that attestation names are on the
  * repository's default branch, for a release-only listing whether the source
  * it names is public and what its release repository pins, and for a licensed
@@ -9,8 +9,8 @@
  *
  *   node check/cli.mjs [--pins repositories.json] [index.json ...]
  *
- * With no index named, catalog.json, catalog-v2.json and catalog-v3.json are
- * checked.
+ * With no index named, catalog.json, catalog-v2.json, catalog-v3.json and
+ * catalog-v4.json are checked.
  *
  * Reads the index schema and the package checks from a checkout of
  * openbrf/openbrf with its plugin-sdk and theme-tools built, at `.core` or
@@ -25,7 +25,11 @@ import { promisify } from "node:util";
 
 import { defaultBranchChecker } from "./branch.mjs";
 import { sdk, themeTools } from "./core.mjs";
-import { indexFileProblems, indexFileProblemsV3 } from "./index-files.mjs";
+import {
+  indexFileProblems,
+  indexFileProblemsV3,
+  indexFileProblemsV4,
+} from "./index-files.mjs";
 import { readJson } from "./json-file.mjs";
 import {
   SOURCE_FILE,
@@ -36,13 +40,19 @@ import {
 const run = promisify(execFile);
 
 /** The index files this repository publishes, one for each index version. */
-const INDEX_FILES = ["catalog.json", "catalog-v2.json", "catalog-v3.json"];
+const INDEX_FILES = [
+  "catalog.json",
+  "catalog-v2.json",
+  "catalog-v3.json",
+  "catalog-v4.json",
+];
 
 /** The index version each of those files must carry. */
 const INDEX_VERSIONS = new Map([
   ["catalog.json", 1],
   ["catalog-v2.json", 2],
   ["catalog-v3.json", 3],
+  ["catalog-v4.json", 4],
 ]);
 
 const args = process.argv.slice(2);
@@ -334,6 +344,7 @@ for (const indexPath of indexPaths) {
 const version1 = passedIndexes.get("catalog.json");
 const version2 = passedIndexes.get("catalog-v2.json");
 const version3 = passedIndexes.get("catalog-v3.json");
+const version4 = passedIndexes.get("catalog-v4.json");
 for (const [older, newer, pairProblemsOf, names] of [
   [version1, version2, indexFileProblems, "catalog.json and catalog-v2.json"],
   [
@@ -341,6 +352,12 @@ for (const [older, newer, pairProblemsOf, names] of [
     version3,
     indexFileProblemsV3,
     "catalog-v2.json and catalog-v3.json",
+  ],
+  [
+    version3,
+    version4,
+    indexFileProblemsV4,
+    "catalog-v3.json and catalog-v4.json",
   ],
 ]) {
   if (older !== undefined && newer !== undefined) {

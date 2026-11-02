@@ -1,0 +1,419 @@
+{
+  "version": 4,
+  "entries": [
+    {
+      "type": "plugin",
+      "id": "occupancy",
+      "version": "0.2.0",
+      "name": {
+        "sv": "Beläggning (exempeltillägg)",
+        "en": "Occupancy (example plugin)"
+      },
+      "description": {
+        "sv": "Referenstillägget för Open BRF: hur många lägenheter, boende och medlemmar föreningen har, och vilka lägenheter som saknar boende som tillägget kan se.",
+        "en": "The reference plugin for Open BRF: how many apartments, residents and members the association has, and which apartments have no resident the plugin can see."
+      },
+      "homepage": "https://github.com/openbrf/example-plugin",
+      "packageName": "@openbrf/example-plugin",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "residency"
+      ],
+      "actions": [
+        {
+          "id": "summary",
+          "capability": "addressBook:read",
+          "effect": "read",
+          "personalData": [],
+          "surfaces": [
+            "ui",
+            "mcp"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa styrelsen hur många lägenheter, boende och medlemmar föreningen har, och hur många boende och bostadsrättshavare varje lägenhet har, räknat bland de boende som tillägget kan se. Inga namn visas.",
+          "en": "Show the board how many apartments, residents and members the association has, and how many residents and tenant-owners each apartment has, counting only the residents the plugin can see. No names are shown."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Styrelsens behov av en överblick över boendet för att förvalta föreningen.",
+          "en": "The board's need for an overview of who lives in the building in order to run the association."
+        },
+        "retention": {
+          "sv": "Ingenting sparas: uppgifterna läses ur registret varje gång vyn visas.",
+          "en": "Nothing is kept: the data is read from the register each time the view is shown."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/example-plugin/releases/download/v0.2.0/openbrf-example-plugin-0.2.0.tgz",
+        "sha512": "sha512-B1h6/0WNUMc6DRNQcOp0W4H2DeSuz/WGaehr1odPwJJ8FI15Wh5JeKZ2ZTdK5mq/y51szCIXOC2yGZbIc30dgw==",
+        "bytes": 74269
+      }
+    },
+    {
+      "type": "plugin",
+      "id": "signage",
+      "version": "0.1.1",
+      "name": {
+        "sv": "Digital skyltning",
+        "en": "Digital signage"
+      },
+      "description": {
+        "sv": "Betalmodul från Apteo för skärmar i huset: kopplar ihop skärmarna med instansen, ställer in vad varje skärm visar och ger den nyheter, evenemang, kallelser och lediga tider. Kräver ett Apteo-konto: utan kontonyckel går ingen skärm att koppla ihop.",
+        "en": "A paid module from Apteo for the screens in the building: pairs the screens with the instance, sets what each screen shows and gives it news, events, meeting notices and free times. Needs an Apteo account: without an account key no screen can be paired."
+      },
+      "homepage": "https://github.com/openbrf/signage",
+      "packageName": "@apteoab/signage",
+      "apiVersion": 1,
+      "permissions": [
+        "news:read",
+        "calendar:read",
+        "bookings:readAvailability",
+        "media:read",
+        "addresses:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "photograph",
+        "freeText"
+      ],
+      "extensionPoints": [
+        {
+          "id": "source",
+          "version": 1,
+          "personalData": [
+            "name",
+            "apartment"
+          ],
+          "title": {
+            "sv": "Källa till skärmarnas innehåll",
+            "en": "Source of the screens' content"
+          },
+          "description": {
+            "sv": "Låter en utökning lägga till innehåll i skärmarnas rotation. Tar emot namn och lägenheter, och bara för de skärmar styrelsen slagit på utökningen för.",
+            "en": "Lets an addon add content to the screens' rotation. Accepts names and apartments, and only for the screens the board switched the addon on for."
+          }
+        }
+      ],
+      "recipients": [
+        {
+          "id": "pairing-service",
+          "origin": "https://signage.openbrf.se",
+          "purpose": {
+            "sv": "Apteos parkopplingstjänst för digital skyltning. Hit skickas kontonyckeln, de tio första tecknen i den kod en skärm visar när den parkopplas (aldrig de sex sista), den förseglade överlämningen till skärmen, som tjänsten inte kan läsa, och vilken releasekanal skärmen följer. Tjänsten får inget skärminnehåll och inget om föreningens boende.",
+            "en": "Apteo's pairing service for digital signage. It receives the account key, the first ten characters of the code a screen shows when it is paired (never the last six), the sealed handover to the screen, which the service cannot read, and which release channel the screen follows. It receives no screen content and nothing about the association's residents."
+          },
+          "personalData": []
+        }
+      ],
+      "deviceRoutes": [
+        {
+          "id": "screen",
+          "path": "screen"
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa på husets skärmar de nyheter och evenemang styrelsen markerat för skärmar, kallelsen till nästa föreningsstämma, lediga tider och de bilder styrelsen valt ut. Modulen läser ingen person ur registret. Fritexten är det styrelsen skrivit, och den kan nämna någon som registret inte känner igen. Fotografierna är bilder uppladdade som att de inte visar någon som går att känna igen. Namn och lägenheter ur registret når en skärm bara från en utökning som styrelsen slagit på för just den skärmen.",
+          "en": "Show on the building's screens the news items and events the board marked for screens, the notice of the next general meeting, free times and the pictures the board chose. The module reads nobody from the register. The free text is what the board wrote, and it can name somebody the register does not hold. The photographs are pictures uploaded as showing nobody recognisable. Names and apartments from the register reach a screen only from an addon the board switched on for that screen."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att de som bor i och besöker huset ser föreningens nyheter, evenemang, kallelser och lediga tider där de går förbi, och, där styrelsen slagit på en utökning för en skärm, vem som bor bakom varje dörr i uppgången, som en namntavla visar det.",
+          "en": "That the people who live in and visit the building see the association's news, events, meeting notices and free times where they pass, and, where the board switched an addon on for a screen, who lives behind each door of the entrance, as a name board shows it."
+        },
+        "retention": {
+          "sv": "Sparas inte på instansen. På skärmen till nästa hämtning, och i skärmens cache högst 24 timmar när instansen inte svarar.",
+          "en": "Not stored on the instance. On the screen until the next fetch, and in the screen's cache for at most 24 hours while the instance does not answer."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/signage/releases/download/v0.1.1/apteoab-signage-0.1.1.tgz",
+        "sha512": "sha512-Qu2GDTffPkkL5qyqNzOizxpVRbk+l66QD1Gv4xA14V7Sbv4B2ZWbd0qE6yAq8CamjB0fuB08NcVXS15uotGPnQ==",
+        "bytes": 112959
+      }
+    },
+    {
+      "type": "plugin",
+      "id": "signage-residents",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Digital skyltning: boende vid dörrarna",
+        "en": "Digital signage: residents at the doors"
+      },
+      "description": {
+        "sv": "Betalutökning till Digital skyltning: visar vilket hushåll som bor bakom vilken dörr på skärmarna inne i en entré, som en namntavla. Efternamn per lägenhet, förnamn bara med samtycke, och ingen med skyddade personuppgifter, begränsad behandling eller invändning. Kräver Digital skyltning och därmed ett Apteo-konto.",
+        "en": "A paid addon to Digital signage: shows which household lives behind which door on the screens inside an entrance, as a name board does. Surnames per apartment, a first name only with consent, and nobody with protected personal data, under a restriction or who has objected. Needs Digital signage and so an Apteo account."
+      },
+      "homepage": "https://github.com/openbrf/signage-residents",
+      "packageName": "@apteoab/signage-residents",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read"
+      ],
+      "personalData": [
+        "name",
+        "apartment"
+      ],
+      "extends": [
+        {
+          "plugin": "signage",
+          "point": "source",
+          "version": 1,
+          "personalData": [
+            "name",
+            "apartment"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Visa vilket hushåll som bor bakom vilken dörr på skärmarna i husets egna entréer, så att besökare, bud och räddningstjänst hittar rätt dörr.",
+          "en": "Show which household lives behind which door on the screens in the house's own entrances, so that visitors, deliveries and emergency services find the right door."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att hjälpa den som söker ett hushåll i huset att hitta det, som en namntavla i entrén alltid har gjort. Avvägning: bara efternamn, förnamn bara med samtycke, bara i det egna huset och bara på skärmar inne i huset. Personer med skyddade personuppgifter eller begränsad behandling visas aldrig, och den som invänder tas bort.",
+          "en": "Helping somebody looking for a household in the building to find it, as a name board in the entrance always has. Balancing: surnames only, a first name only with consent, only in the house itself and only on screens inside it. Persons with protected personal data or under a restriction are never shown, and anybody who objects is taken off."
+        },
+        "retention": {
+          "sv": "Sparas inte av utökningen. Visas så länge boendet gäller och tas bort vid utflyttning eller invändning. På skärmen till nästa hämtning, och i skärmens cache högst 24 timmar när instansen inte svarar.",
+          "en": "Not stored by the addon. Shown while the residency holds, and taken off at move-out or objection. On the screen until its next fetch, and in the screen's cache for at most 24 hours while the instance does not answer."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "artifact": {
+        "url": "https://github.com/openbrf/signage-residents/releases/download/v0.1.0/apteoab-signage-residents-0.1.0.tgz",
+        "sha512": "sha512-YOU+zhGNldBUmzk6rntc/DRJJShjJ8hcs+HB9W5VV4aqs8rMqsV/1PkRMxcpl/mag/+/grwY3RXpaqi75JYu/Q==",
+        "bytes": 79222
+      }
+    },
+    {
+      "type": "plugin",
+      "id": "parking-share",
+      "version": "0.1.1",
+      "name": {
+        "sv": "Parkeringsdelning",
+        "en": "Parking share"
+      },
+      "description": {
+        "sv": "Modul från Apteo: en boende erbjuder sin parkeringsplats för dagar när den inte används, och en granne bokar den. Den som hinner först får platsen. Styrelsen håller listan över platser, tilldelar dem och ser alla erbjudanden och bokningar.",
+        "en": "A module from Apteo: a resident offers their parking space for days they will not use it, and a neighbour claims it. The first claim wins. The board keeps the list of spaces, assigns each one and sees every offer and claim."
+      },
+      "homepage": "https://github.com/openbrf/parking-share",
+      "packageName": "@apteoab/parking-share",
+      "apiVersion": 1,
+      "permissions": [
+        "addressBook:read",
+        "addressBook:readContact",
+        "mail:send",
+        "jobs:schedule"
+      ],
+      "personalData": [
+        "name",
+        "apartment",
+        "email"
+      ],
+      "actions": [
+        {
+          "id": "offer",
+          "capability": "self:manage",
+          "effect": "write",
+          "personalData": [
+            "apartment"
+          ],
+          "surfaces": [
+            "ui",
+            "ai"
+          ]
+        },
+        {
+          "id": "claim",
+          "capability": "self:manage",
+          "effect": "write",
+          "personalData": [
+            "apartment"
+          ],
+          "surfaces": [
+            "ui",
+            "ai"
+          ]
+        }
+      ],
+      "processing": {
+        "purpose": {
+          "sv": "Låta en boende erbjuda sin parkeringsplats under en period när den inte används och en granne ta den, samt ge styrelsen en översikt över platserna, erbjudandena och bokningarna.",
+          "en": "Let a resident offer their parking space for a period when it is not used and a neighbour claim it, and give the board an overview of the spaces, offers and claims."
+        },
+        "legalBasis": "legitimateInterest",
+        "legitimateInterest": {
+          "sv": "Att de som bor i huset kan använda en parkeringsplats som innehavaren inte behöver under en period, i stället för att den står tom, och att styrelsen har en översikt över platserna den tilldelar och hur de delas. Avvägning: en granne ser bara platsen och dagarna, aldrig vem som erbjuder eller tar den, och erbjudanden och bokningar raderas ett år efter sin period. Ingen med skyddade personuppgifter eller begränsad behandling tas med, inte heller den vars invändning styrelsen har beviljat.",
+          "en": "That the people who live in the building can use a parking space its holder does not need for a period, instead of it standing empty, and that the board has an overview of the spaces it assigns and how they are shared. Balancing: a neighbour sees only the space and the days, never who offers or claims it, and offers and claims are erased a year after their period. Nobody with protected personal data or under a restriction is included, nor anybody whose objection the board has granted."
+        },
+        "retention": {
+          "sv": "Ett erbjudande och en bokning raderas ett år efter den period de gäller. En tilldelning av plats raderas senast fem år efter att den gjordes, eller tidigare om styrelsen tar bort den.",
+          "en": "An offer and a claim are erased a year after the period they cover. An assignment of a space is erased five years after it was made at the latest, or earlier if the board removes it."
+        },
+        "dataSubjects": [
+          "members",
+          "residents"
+        ]
+      },
+      "personRecords": [
+        {
+          "collection": "assignments",
+          "titleKey": "records.assignments.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 1830,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.assignments.space"
+            }
+          ]
+        },
+        {
+          "collection": "offers",
+          "titleKey": "records.offers.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 730,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.offers.space",
+              "provided": true
+            },
+            {
+              "key": "from",
+              "labelKey": "records.offers.from",
+              "provided": true
+            },
+            {
+              "key": "to",
+              "labelKey": "records.offers.to",
+              "provided": true
+            },
+            {
+              "key": "status",
+              "labelKey": "records.offers.status"
+            }
+          ]
+        },
+        {
+          "collection": "days",
+          "titleKey": "records.days.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 366,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.days.space",
+              "provided": true
+            },
+            {
+              "key": "day",
+              "labelKey": "records.days.day",
+              "provided": true
+            }
+          ]
+        },
+        {
+          "collection": "claims",
+          "titleKey": "records.claims.title",
+          "personalData": [
+            "apartment"
+          ],
+          "keepAtMostDays": 730,
+          "fields": [
+            {
+              "key": "space",
+              "labelKey": "records.claims.space",
+              "provided": true
+            },
+            {
+              "key": "from",
+              "labelKey": "records.claims.from",
+              "provided": true
+            },
+            {
+              "key": "to",
+              "labelKey": "records.claims.to",
+              "provided": true
+            },
+            {
+              "key": "status",
+              "labelKey": "records.claims.status"
+            }
+          ]
+        }
+      ],
+      "residentRoutes": [
+        {
+          "path": "me",
+          "title": {
+            "sv": "Se din egen parkeringsplats, dina erbjudanden och dina bokningar",
+            "en": "See your own parking space, offers and claims"
+          }
+        },
+        {
+          "path": "offers",
+          "title": {
+            "sv": "Erbjud din parkeringsplats några dagar och ta en grannes",
+            "en": "Offer your parking space for some days, and claim a neighbour's"
+          }
+        }
+      ],
+      "artifact": {
+        "url": "https://github.com/openbrf/parking-share/releases/download/v0.1.1/apteoab-parking-share-0.1.1.tgz",
+        "sha512": "sha512-jXh/75GfwfquFP2Y6plO2Kv4oYV124ZVVkU2e9At0Kr2kBvVy/6QFpAy/0wWGlePCHEA2eCRFLCVW21OT5r7JQ==",
+        "bytes": 137852
+      }
+    },
+    {
+      "type": "theme",
+      "id": "example-theme",
+      "version": "0.1.0",
+      "name": {
+        "sv": "Exempeltema",
+        "en": "Example theme"
+      },
+      "description": {
+        "sv": "Ett tema som ärver standardtemat, byter förtroendeaccenten till grönt och har en egen typsnittsfil.",
+        "en": "A theme that inherits the default and changes the trust accent to green, bundling its own typeface."
+      },
+      "homepage": "https://github.com/openbrf/example-theme",
+      "contract": "^1.0.0",
+      "extends": "porttavlan",
+      "artifact": {
+        "url": "https://github.com/openbrf/example-theme/releases/download/v0.1.0/example-theme-0.1.0.tgz",
+        "sha512": "sha512-wI0wbPu+FVGzywsaHK3/GqbMyo2xGR2FPW/qiUEl+gsHyzms6e9vZ11Q8tiqQCl+US2o0hArLpOWK9Lzq3uZJQ==",
+        "bytes": 40361
+      }
+    }
+  ]
+}
